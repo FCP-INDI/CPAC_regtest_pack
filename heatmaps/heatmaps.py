@@ -1,15 +1,31 @@
+"""Visualize correlations between runs
+
+Copyright (C) 2022  C-PAC Developers
+This file is part of CPAC_regtest_pack.
+CPAC_regtest_pack is free software: you can redistribute it and/or
+modify it under the terms of the GNU Lesser General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+CPAC_regtest_pack is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser
+General Public License for more details.
+You should have received a copy of the GNU Lesser General Public
+License along with CPAC_regtest_pack. If not, see
+<https://www.gnu.org/licenses/>"""
 import argparse
+# import os
+import sys
+from warnings import filterwarnings
+
 import matplotlib as mpl
 import numpy as np
-import os
-import pandas as pd
-import sys
+# import pandas as pd
 import yaml
 
-from matplotlib import gridspec as GS
+# from matplotlib import gridspec as GS
 from matplotlib import pyplot as plt
 from scipy import io as sio
-from warnings import filterwarnings
 
 try:
     from configs import defaults
@@ -23,9 +39,9 @@ filterwarnings(
     "Warning: converting a masked element to nan"
 )
 
+
 def annotate_heatmap(im, data=None, valfmt="{x:.2f}",
-                     textcolors=["black", "white"],
-                     threshold=None, **textkw):
+                     textcolors=None, threshold=None, **textkw):
     """
     A function to annotate a heatmap.
 
@@ -50,7 +66,8 @@ def annotate_heatmap(im, data=None, valfmt="{x:.2f}",
         All other arguments are forwarded to each call to `text` used to create
         the text labels.
     """
-    import matplotlib
+    if textcolors is None:
+        textcolors = ["black", "white"]
 
     if not isinstance(data, (list, np.ndarray)):
         data = im.get_array()
@@ -69,7 +86,7 @@ def annotate_heatmap(im, data=None, valfmt="{x:.2f}",
 
     # Get the formatter in case a string is supplied
     if isinstance(valfmt, str):
-        valfmt = matplotlib.ticker.StrMethodFormatter(valfmt)
+        valfmt = mpl.ticker.StrMethodFormatter(valfmt)
 
     # Loop over the data and create a `Text` for each "pixel".
     # Change the text's color depending on the data.

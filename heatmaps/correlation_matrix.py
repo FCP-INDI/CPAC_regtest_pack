@@ -1,33 +1,49 @@
+"""Generate a correlation matrix between two output directories
+
+Copyright (C) 2022  C-PAC Developers
+This file is part of CPAC_regtest_pack.
+CPAC_regtest_pack is free software: you can redistribute it and/or
+modify it under the terms of the GNU Lesser General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+CPAC_regtest_pack is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser
+General Public License for more details.
+You should have received a copy of the GNU Lesser General Public
+License along with CPAC_regtest_pack. If not, see
+<https://www.gnu.org/licenses/>"""
 # coding=utf-8
+# pylint: disable=wrong-import-position
 import sys
 
-if (sys.version_info < (3, 6)):
+if sys.version_info < (3, 6):
     raise EnvironmentError("This module requires Python 3.6 or newer.")
 
 import argparse
 import glob
+from itertools import chain
 import numpy as np
-import os
+# import os
 import pandas as pd
-import scipy.io as sio
+# import scipy.io as sio
 
 from afnipy.lib_afni1D import Afni1D
-from itertools import chain
 from scipy.stats import pearsonr
 from tabulate import tabulate
 
 try:
     from configs.defaults import feature_headers, motion_list, \
-                                 regressor_list, software
+                                 regressor_list  # , software as default_software
     from configs.subjects import fmriprep_sub, \
         generate_subject_list_for_directory
-    from heatmaps import generate_heatmap, reshape_corrs
+    # from heatmaps import generate_heatmap, reshape_corrs
 except ModuleNotFoundError:
     from .configs.defaults import feature_headers, motion_list, \
-                                  regressor_list, software
+                                  regressor_list  # , software as default_software
     from .configs.subjects import fmriprep_sub, \
         generate_subject_list_for_directory
-    from .heatmaps import generate_heatmap, reshape_corrs
+    # from .heatmaps import generate_heatmap, reshape_corrs
 
 sorted_keys = list(feature_headers.keys())
 sorted_keys.sort(key=str.lower)
@@ -76,48 +92,22 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
 
-    path_help = ("path to an outputs directory - the "
-                 "folder containing the participant-ID "
-                 "labeled directories")
+    parser.add_argument("outputs_path", nargs=2, type=str,
+                        help="path to an outputs directory")
 
-    parser.add_argument("--old_outputs_path", type=str,
-                        help=path_help, default="fmriprep")
+    parser.add_argument("--subject_list", type=str, nargs="*")
 
-    parser.add_argument("--old_outputs_software", type=str,
-                        choices=software, default="fmriprep",
-                        help="(default: %(default)s)")
+    parser.add_argument("--session", type=str,
+                        help="limit to a single given session")
 
-    parser.add_argument("--new_outputs_path", type=str,
-                        help=path_help)
-
-    parser.add_argument("--new_outputs_software", type=str,
-                        choices=software, default="C-PAC",
-                        help="(default: %(default)s)")
-
-    parser.add_argument("--save", dest="save", action='store_true',
-                        help="save matrices & heatmap (default)")
-
-    parser.add_argument("--no-save", dest="save", action='store_false',
-                        help="do not save matrices & heatmap")
-
-    parser.set_defaults(save=True)
-
-    parser.add_argument("--subject_list", type=str,
-                        help="(default: subjects in OLD_OUTPUTS_PATH sorted "
-                             "by session, subject ID). TODO: handle path to "
-                             "file")
-
-    parser.add_argument("--session", type=int,
-                        help="limit to a single given session (integer)")
-
-    parser.add_argument("--feature_list", type=str,
+    # TODO: handle path to file
+    parser.add_argument("--feature_list", type=str, nargs="*",
                         default=regressor_list + motion_list,
-                        help="TODO: handle path to file (default: "
-                             "%(default)s)")
+                        help="default: %(default)s")
 
-    parser.add_argument("num_cores", type=int,
-                        help="number of cores to use - will calculate " \
-                              "correlations in parallel if greater than 1")
+    parser.add_argument("--num_cores", type=int, default=4,
+                        help="number of cores to use - will calculate "
+                             "correlations in parallel if greater than 1")
 
     parser.add_argument("run_name", type=str,
                         help="name for the correlations run")
@@ -126,61 +116,61 @@ def main():
 
     subject_list = args.subject_list if (
         "subject_list" in args and args.subject_list is not None
-    ) else generate_subject_list_for_directory(args.old_outputs_path)
+    ) else generate_subject_list_for_directory(args.outputs_path[0])
 
     if "session" in args and args.session is not None:
         subject_list = [
             sub for sub in subject_list if sub.endswith(str(args.session))
         ]
 
-    corrs = Correlation_Matrix(
-        subject_list,
-        args.feature_list,
-        [{
-            "software": args.new_outputs_software,
-            "run_path": args.new_outputs_path if args.new_outputs_path.endswith(
-                "/"
-            ) else f"{args.new_outputs_path}/"
-        }, {
-            "software": args.old_outputs_software,
-            "run_path": args.old_outputs_path if args.old_outputs_path.endswith(
-                "/"
-            ) else f"{args.old_outputs_path}/"
-        }]
-    )
+    # corrs = Correlation_Matrix(
+    #     subject_list,
+    #     args.feature_list,
+    #     [{
+    #         "software": args.new_outputs_software,
+    #         "run_path": args.new_outputs_path if args.new_outputs_path.endswith(
+    #             "/"
+    #         ) else f"{args.new_outputs_path}/"
+    #     }, {
+    #         "software": args.old_outputs_software,
+    #         "run_path": args.old_outputs_path if args.old_outputs_path.endswith(
+    #             "/"
+    #         ) else f"{args.old_outputs_path}/"
+    #     }]
+    # )
 
-    path_table = corrs.print_filepaths(plaintext=True)
+    # path_table = corrs.print_filepaths(plaintext=True)
 
-    if args.save:
-        output_dir = os.path.join(
-            os.getcwd(), "correlations_{0}".format(args.run_name)
-        )
+    # if args.save:
+    #     output_dir = os.path.join(
+    #         os.getcwd(), "correlations_{0}".format(args.run_name)
+    #     )
 
-        if not os.path.exists(output_dir):
-            try:
-                os.makedirs(output_dir)
-            except:
-                err = ("\n\n[!] Could not create the output directory for the "
-                       "correlations. Do you have write permissions?\n "
-                       f"Attempted output directory: {output_dir}\n\n")
-                raise Exception(err)
+    #     if not os.path.exists(output_dir):
+    #         try:
+    #             os.makedirs(output_dir)
+    #         except:
+    #             err = ("\n\n[!] Could not create the output directory for the "
+    #                    "correlations. Do you have write permissions?\n "
+    #                    f"Attempted output directory: {output_dir}\n\n")
+    #             raise Exception(err)
 
-        path_table.to_csv(os.path.join(output_dir, "filepaths.csv"))
-        sio.savemat(
-            os.path.join(output_dir, "corrs.mat"), {'corrs':corrs.corrs}
-        )
+    #     path_table.to_csv(os.path.join(output_dir, "filepaths.csv"))
+    #     sio.savemat(
+    #         os.path.join(output_dir, "corrs.mat"), {'corrs':corrs.corrs}
+    #     )
 
-    generate_heatmap(
-        reshape_corrs(corrs.corrs),
-        args.feature_list,
-        subject_list,
-        save_path=os.path.join(
-            output_dir, "heatmap.png"
-        ) if args.save else args.save,
-        title=f"{args.new_outputs_software} "
-        f"{args.new_outputs_path.split('/')[-1]} vs "
-        f"{args.old_outputs_software} {args.old_outputs_path.split('/')[-1]}"
-    )
+    # generate_heatmap(
+    #     reshape_corrs(corrs.corrs),
+    #     args.feature_list,
+    #     subject_list,
+    #     save_path=os.path.join(
+    #         output_dir, "heatmap.png"
+    #     ) if args.save else args.save,
+    #     title=f"{args.new_outputs_software} "
+    #     f"{args.new_outputs_path.split('/')[-1]} vs "
+    #     f"{args.old_outputs_software} {args.old_outputs_path.split('/')[-1]}"
+    # )
 
 
 class Subject_Session_Feature:
