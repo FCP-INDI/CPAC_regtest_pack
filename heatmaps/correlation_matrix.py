@@ -32,18 +32,9 @@ from afnipy.lib_afni1D import Afni1D
 from scipy.stats import pearsonr
 from tabulate import tabulate
 
-try:
-    from configs.defaults import feature_headers, motion_list, \
-                                 regressor_list  # , software as default_software
-    from configs.subjects import fmriprep_sub, \
-        generate_subject_list_for_directory
-    # from heatmaps import generate_heatmap, reshape_corrs
-except ModuleNotFoundError:
-    from .configs.defaults import feature_headers, motion_list, \
-                                  regressor_list  # , software as default_software
-    from .configs.subjects import fmriprep_sub, \
-        generate_subject_list_for_directory
-    # from .heatmaps import generate_heatmap, reshape_corrs
+from configs.defaults import feature_headers, motion_list, \
+                                regressor_list
+from configs.subjects import gather_unique_ids
 
 sorted_keys = list(feature_headers.keys())
 sorted_keys.sort(key=str.lower)
@@ -95,15 +86,15 @@ def main():
     parser.add_argument("outputs_path", nargs=2, type=str,
                         help="path to an outputs directory")
 
-    parser.add_argument("--subject_list", type=str, nargs="*")
+    # parser.add_argument("--subject_list", type=str, nargs="*")
 
-    parser.add_argument("--session", type=str,
-                        help="limit to a single given session")
+    # parser.add_argument("--session", type=str,
+    #                     help="limit to a single given session")
 
-    # TODO: handle path to file
-    parser.add_argument("--feature_list", type=str, nargs="*",
-                        default=regressor_list + motion_list,
-                        help="default: %(default)s")
+    # # TODO: handle path to file
+    # parser.add_argument("--feature_list", type=str, nargs="*",
+    #                     default=regressor_list + motion_list,
+    #                     help="default: %(default)s")
 
     parser.add_argument("--num_cores", type=int, default=4,
                         help="number of cores to use - will calculate "
@@ -114,14 +105,18 @@ def main():
 
     args = parser.parse_args()
 
-    subject_list = args.subject_list if (
-        "subject_list" in args and args.subject_list is not None
-    ) else generate_subject_list_for_directory(args.outputs_path[0])
+    a = gather_unique_ids(args.outputs_path[0])
+    b = gather_unique_ids(args.outputs_path[1])
+    unique_ids = a.intersection(b)
 
-    if "session" in args and args.session is not None:
-        subject_list = [
-            sub for sub in subject_list if sub.endswith(str(args.session))
-        ]
+    # subject_list = args.subject_list if (
+    #     "subject_list" in args and args.subject_list is not None
+    # ) else generate_subject_list_for_directory(args.outputs_path[0])
+
+    # if "session" in args and args.session is not None:
+    #     subject_list = [
+    #         sub for sub in subject_list if sub.endswith(str(args.session))
+    #     ]
 
     # corrs = Correlation_Matrix(
     #     subject_list,

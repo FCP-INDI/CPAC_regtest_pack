@@ -69,6 +69,18 @@ regressor_list = [
 ]
 
 
+class Feature:
+    """Class to store features to compare"""
+    def __init__(self, name, **kwargs):
+        self.name = name
+        self.link = kwargs('link', Undefined)
+        self.software = {}
+
+    def set_software_regex(self, software, regex):
+        """Define regex for finding feature"""
+        self.software[software].regex = regex
+
+
 class Software:
     """Class to store software name and version"""
     # pylint: disable=too-few-public-methods

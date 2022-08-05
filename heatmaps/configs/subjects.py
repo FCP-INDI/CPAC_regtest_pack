@@ -1,162 +1,105 @@
-import os
+"""Determine subjects to compare
 
-from itertools import chain
-from string import ascii_lowercase
+Copyright (C) 2022  C-PAC Developers
+This file is part of CPAC_regtest_pack.
+CPAC_regtest_pack is free software: you can redistribute it and/or
+modify it under the terms of the GNU Lesser General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+CPAC_regtest_pack is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser
+General Public License for more details.
+You should have received a copy of the GNU Lesser General Public
+License along with CPAC_regtest_pack. If not, see
+<https://www.gnu.org/licenses/>"""
+import numpy as np
+from bids import BIDSLayout
+# from itertools import chain
+# from traits.api import Undefined
 
-
-def cpac_sub(sub):
-    """
-    Function to convert a string from f"sub-{sub_number}{ses_letter}" to
-    f"sub-{sub_number}_ses-{ses_number}"
-
-    Parameter
-    ---------
-    fmriprep_sub: str
-
-    Returns
-    -------
-    sub: str
-
-    Example
-    -------
-    >>> print(cpac_sub("sub-0025427a"))
-    sub-0025427_ses-1
-    """
-    return(f"{sub[:-1]}_ses-{str(ascii_lowercase.find(sub[-1])+1)}")
+_attributes = {'subject': 'sub', 'session': 'ses', 'acquisition': 'acq',
+               'run': 'run', 'task': 'task'}
 
 
-def fmriprep_sub(sub):
-    """
-    Function to convert a string from f"sub-{sub_number}_ses-{ses_number}" to
-    f"sub-{sub_number}{ses_letter}"
-
-    Parameter
-    ---------
-    sub: str
-
-    Returns
-    -------
-    fmriprep_sub: str
-
-    Example
-    -------
-    >>> print(fmriprep_sub("sub-0025427_ses-1"))
-    sub-0025427a
-    """
-    return(f"{sub.split('_')[0]}{ascii_lowercase[int(sub[-1])-1]}")
-
-
-def generate_subject_list_for_directory(path, old_outputs_software="C-PAC"):
-    """
-    Function to take a path and return a subject list.
-
-    Parameter
-    ---------
-    path: str
-
-    old_outputs_software: str, optional, default="C-PAC"
-
-    Returns
-    -------
-    sub_list: list
-    """
-    output = os.path.join(path, "output")
-    sub_ses_list = list(chain.from_iterable([[
-        d for d in os.listdir(
-            os.path.join(output, o)
-        ) if all([
-            os.path.isdir(os.path.join(output, o, d)),
-            d not in ["log", "logs"]
-        ])
-    ] for o in os.listdir(output)]))
-    return(sessions_together([
-        cpac_sub(s) if s[
-            -1
-        ] in ascii_lowercase else s for s in sub_ses_list
-    ]))
-
-
-def generate_subject_list_for_range(
-    subject_start_stop,
-    session_start_stop=None
-):
-    """
-    Function to create a subject list for a given range. All values are
-    inclusive.
+def gather_unique_ids(path):
+    '''Given a root directory, return a list of UniqueIDs
 
     Parameters
     ----------
-    subject_start_stop: 2-tuple of integers (start, stop) or list of specific
-    values
-
-    session_start_stop: 2-tuple of integers (start, stop) or list of specific
-    values or None
+    path : str
 
     Returns
     -------
-    List of strings
-
-    Example
-    -------
-    >>> generate_subject_list_for_range((25427,25428), (1,2))
-    ['sub-0025427_ses-1', 'sub-0025428_ses-1', 'sub-0025427_ses-2', 'sub-0025428_ses-2']
-    """
-    return([
-        f'sub-00{sub}{ses_string}' for ses_string in ([
-            f'_ses-{ses}' for ses in _expand_range(
-                session_start_stop
-            )
-        ] if session_start_stop else [
-            ''
-        ]) for sub in _expand_range(subject_start_stop)
-    ])
+    set of UniqueID'''
+    layout = BIDSLayout(path, validate=False)
+    layout_df = layout.to_df()
+    unique_ids = set()
+    for row in layout_df[
+        [col for col in _attributes if col in layout_df.columns]
+    ].drop_duplicates().iterrows():
+        try:
+            unique_ids.add(UniqueID(**row[1].to_dict()))
+        except TypeError:
+            pass
+    return unique_ids
 
 
-def sessions_together(sub_list):
-    """
-    Function to sort by session then by subject
+class UniqueID:
+    '''A representation of BIDS information
 
-    Parameter
-    ---------
-    sub_list: list of str
+    Comparisons operate first on number of BIDS entities, then on
+    string comparisons'''
+    def __init__(self, subject, **kwargs):
+        '''
+        Parameters
+        ----------
+        subject : str
 
-    Returns
-    -------
-    sub_list: list of str
+        session, acquisition, task, run : str or int, optional'''
+        if not isinstance(subject, str):
+            raise TypeError('``subject`` must be a string.')
+        self.subject = subject
+        for attr in ['session', 'acquisition', 'task', 'run']:
+            value = kwargs.get(attr)
+            if value is not None and value is not np.nan:
+                setattr(self, attr, value)
 
-    Example
-    -------
-    >>> sub_list = [
-    ...    'sub-0025427_ses-1', 'sub-0025427_ses-2', 'sub-0025428_ses-1'
-    ... ]
-    >>> print(sessions_together(sub_list))
-    ['sub-0025427_ses-1', 'sub-0025428_ses-1', 'sub-0025427_ses-2']
-    """
-    sub_list.sort()
-    sub_list.sort(key=lambda x: x.split("ses-")[-1])
-    return(sub_list)
+    def __eq__(self, other):
+        return str(self) == str(other)
 
+    def __ge__(self, other):
+        if self.entity_count != other.entity_count:
+            return self.entity_count >= other.entity_count
+        return str(self) >= other.self
 
-def _expand_range(tuple_or_list):
-    """
-    Function to expand an inclusive tuple to a range or return a literal list
+    def __gt__(self, other):
+        if self.entity_count != other.entity_count:
+            return self.entity_count > other.entity_count
+        return str(self) > str(other)
 
-    Parameter
-    ---------
-    tuple_or_list: 2-tuple of integers or list
+    def __hash__(self):
+        return hash(str(self))
 
-    Returns
-    -------
-    list
-    """
-    return(
-        list(
-            range(
-                tuple_or_list[0],
-                tuple_or_list[1] + 1) if all([
-                isinstance(tuple_or_list, tuple),
-                len(tuple_or_list)==2,
-                *[isinstance(v, int) for v in tuple_or_list]
-            ]) else tuple_or_list
-        )
-    )
+    def __le__(self, other):
+        if self.entity_count != other.entity_count:
+            return self.entity_count <= other.entity_count
+        return str(self) <= other.self
+
+    def __lt__(self, other):
+        if self.entity_count != other.entity_count:
+            return self.entity_count < other.entity_count
+        return str(self) < str(other)
+
+    def __repr__(self):
+        return ('_'.join(
+            '-'.join([_attributes[attr], str(getattr(self, attr))]) for
+            attr in self._get_own_attributes()))
+
+    @property
+    def entity_count(self):
+        '''Return the number of BIDS entities in a given UniqueID'''
+        return str(self).count('_') + 1
+
+    def _get_own_attributes(self):
+        return (attr for attr in _attributes if hasattr(self, attr))
