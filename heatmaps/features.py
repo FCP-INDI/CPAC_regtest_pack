@@ -1,4 +1,4 @@
-'''Heatmap defaults
+'''Heatmap features
 
 Copyright (C) 2022  C-PAC Developers
 This file is part of CPAC_regtest_pack.
@@ -13,8 +13,16 @@ General Public License for more details.
 You should have received a copy of the GNU Lesser General Public
 License along with CPAC_regtest_pack. If not, see
 <https://www.gnu.org/licenses/>'''
+from scipy.stats import pearsonr, spearmanr
+from scipy.spatial.distance import dice
 from traits.api import Undefined
 
+
+CORRELATION_METHODS = {
+    'Dice': dice,
+    'Pearson': pearsonr,
+    'Spearman': spearmanr
+}
 feature_headers = {
     'GS': {
         'name': 'global signal regression',
@@ -69,15 +77,84 @@ regressor_list = [
 ]
 
 
+class SoftwareFeature:
+    """Class to store software information related to a feature"""
+    # pylint: disable=too-few-public-methods
+    def __init__(self, name=None):
+        self.name = name
+        self.entities = []
+        self.regex = None
+        self.endswith = None
+
+    def __repr__(self):
+        if self.name is None:
+            return '<unnamed software feature>'
+        return str(self.name)
+
+
 class Feature:
     """Class to store features to compare"""
     def __init__(self, name, **kwargs):
         self.name = name
-        self.link = kwargs('link', Undefined)
+        self.link = kwargs.get('link', Undefined)
         self.software = {}
+        self.correlation_method = {}
+
+    def __repr__(self):
+        return self.name
+
+    def _check_self_software(self, software):
+        if software not in self.software:
+            self.software[software] = SoftwareFeature(': '.join([
+                str(software), self.name]))
+
+    def set_correlation_method(self, correlation_method):
+        """Set feature's correlation method
+
+        Parameters
+        ----------
+        correlation_method : str
+            key in CORRELATION_METHODS
+        """
+        self.correlation_method['label'] = correlation_method
+        self.correlation_method['function'] = CORRELATION_METHODS[
+            correlation_method]
+
+    def set_software_endswith(self, software, endswith):
+        """Define required filename ending for a feature
+
+        Parameters
+        ----------
+        software : Software
+
+        endswith : str
+        """
+        self._check_self_software(software)
+        self.software[software].endswith = endswith
+        if endswith == '_bold.nii.gz':
+            self.set_correlation_method('Pearson')
+        if endswith == '_correlations.tsv':
+            self.set_correlation_method('Spearman')
+        if endswith == '_mask.nii.gz':
+            self.set_correlation_method('Dice')
+
+    def set_software_entities(self, software, entities):
+        """Define entities to match for a feature
+
+        Parameters
+        ----------
+        software : Software
+
+        entities : dict of str
+            key, value pairs of BIDS keys and regular expressions to
+            match BIDS values
+        """
+        self._check_self_software(software)
+        self.software[software].entities = entities
 
     def set_software_regex(self, software, regex):
         """Define regex for finding feature"""
+        self._check_self_software(software)
         self.software[software].regex = regex
 
 
@@ -93,16 +170,22 @@ class Software:
         version : str, Undefined or None
         """
         if not isinstance(version, (str, type(Undefined))):
-            raise TypeError('Software version must be string or Undefined')
+            raise TypeError("Software version must be string or Undefined")
         self.name = name
-        self.version = f'v{version.lstrip("v")}' if isinstance(
+        self.version = f"v{version.lstrip('v')}" if isinstance(
             version, str) else version
 
     def __repr__(self):
         if isinstance(self.version, str):
-            return ' '.join([self.name, self.version])
-        return f'{self.name} unknown version'
+            return " ".join([self.name, self.version])
+        return f"{self.name} unknown version"
 
 
-software = [Software("C-PAC"), Software("fMRIPrep"), Software("XCP-D"),
-            Software("xcpEngine")]
+SOFTWARE = {key: Software(key) for key in
+            ["C-PAC", "fMRIPrep", "XCP-D", "xcpEngine"]}
+
+FEATURES = {key: Feature(key) for key in ["space-template_desc-preproc_bold"]}
+FEATURES["space-template_desc-preproc_bold"].set_software_entities(
+    SOFTWARE["C-PAC"], {'space': 'template', 'desc': 'preproc.*'})
+for feature in ["space-template_desc-preproc_bold"]:
+    FEATURES[feature].set_software_endswith(SOFTWARE["C-PAC"], '_bold.nii.gz')

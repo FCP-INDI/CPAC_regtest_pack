@@ -27,12 +27,11 @@ import yaml
 from matplotlib import pyplot as plt
 from scipy import io as sio
 
+from . import features
 try:
-    from configs import defaults
-    from configs.subjects import generate_subject_list_for_range
+    from subjects import generate_subject_list_for_range
 except ModuleNotFoundError:
-    from .configs import defaults
-    from .configs.subjects import generate_subject_list_for_range
+    from .subjects import generate_subject_list_for_range
 
 filterwarnings(
     "ignore",
@@ -269,7 +268,7 @@ def main(config_path, save_path=None):
         reshape_corrs(
             config_settings['correlation_matrix']
         ) if 'correlation_matrix' in config_settings else
-        defaults.correlation_matrix,
+        features.correlation_matrix,
         var_list=config_settings[
             'var_list'
         ] if 'var_list' in config_settings else (
@@ -285,7 +284,7 @@ def main(config_path, save_path=None):
                 'motion_list'
             ]
         ]) else (
-            defaults.regressor_list + defaults.motion_list
+            features.regressor_list + features.motion_list
         ),
         sub_list=generate_subject_list_for_range(
             (
@@ -298,8 +297,8 @@ def main(config_path, save_path=None):
             ]) else config_settings[
                 'subjects'
             ] if 'subjects' in config_settings else (
-                defaults.subjects['start'],
-                defaults.subjects['stop']
+                features.subjects['start'],
+                features.subjects['stop']
             ), (
                 config_settings['sessions']['start'],
                 config_settings['sessions']['stop']
@@ -310,8 +309,8 @@ def main(config_path, save_path=None):
             ]) else config_settings[
                 'sessions'
             ] if 'sessions' in config_settings else (
-                defaults.sessions['start'],
-                defaults.sessions['stop']
+                features.sessions['start'],
+                features.sessions['stop']
             )
         ),
         save_path=save_path

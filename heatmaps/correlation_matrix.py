@@ -32,9 +32,9 @@ from afnipy.lib_afni1D import Afni1D
 from scipy.stats import pearsonr
 from tabulate import tabulate
 
-from configs.defaults import feature_headers, motion_list, \
-                                regressor_list
-from configs.subjects import gather_unique_ids
+from .directory import determine_software_and_root, iterate_features
+from .features import feature_headers, motion_list, regressor_list
+from .subjects import gather_unique_ids
 
 sorted_keys = list(feature_headers.keys())
 sorted_keys.sort(key=str.lower)
@@ -105,9 +105,23 @@ def main():
 
     args = parser.parse_args()
 
-    a = gather_unique_ids(args.outputs_path[0])
-    b = gather_unique_ids(args.outputs_path[1])
-    unique_ids = a.intersection(b)
+    a_software, a_root = determine_software_and_root(args.outputs_path[0])
+    b_software, b_root = determine_software_and_root(args.outputs_path[1])
+    a_ids = gather_unique_ids(a_root)
+    b_ids = gather_unique_ids(b_root)
+    unique_ids = a_ids[0].intersection(b_ids[0])
+    most_specific_ids = [id for id in unique_ids if
+                         len(id) == max(len(id) for id in unique_ids)]
+    a_files = a_ids[1].get_files()
+    b_files = b_ids[1].get_files()
+    features = {}
+    for specific_id in most_specific_ids:
+        for file in a_files:
+            features = iterate_features(features, file, specific_id,
+                                        a_software, 'a')
+        for file in b_files:
+            features = iterate_features(features, file, specific_id,
+                                        b_software, 'b')
 
     # subject_list = args.subject_list if (
     #     "subject_list" in args and args.subject_list is not None
