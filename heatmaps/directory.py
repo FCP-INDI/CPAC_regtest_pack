@@ -17,6 +17,7 @@ License along with CPAC_regtest_pack. If not, see
 import os
 import re
 from logging import warning
+from typing import List, Tuple
 from traits.api import Undefined
 from .features import FEATURES, SOFTWARE, Software
 from .subjects import ATTRIBUTES, UniqueId
@@ -264,3 +265,34 @@ def iterate_features(features, file, specific_id, software, position):
                     features[feature][position] = file
                 return features
     return features
+
+
+def separate_working_files(file_list: List[str], outputs: str = '/output/',
+                           working: str = '/working/'
+                           ) -> Tuple[List[str], List[str], List[str]]:
+    """Separate file list into outputs, working files and other
+
+    Parameters
+    ----------
+    file_list : list of str
+
+    outputs : str, optional
+        substring in all output paths
+
+    working : str, optional
+        substring in all working paths
+
+    Returns
+    -------
+    output_list, working_list, others : list of str"""
+    output_list = []
+    working_list = []
+    others = []
+    for file in file_list:
+        if outputs in file:
+            output_list.append(file)
+        elif working in file:
+            working_list.append(file)
+        else:
+            others.append(file)
+    return output_list, working_list, others

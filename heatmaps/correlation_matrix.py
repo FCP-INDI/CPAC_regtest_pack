@@ -21,65 +21,39 @@ if sys.version_info < (3, 6):
     raise EnvironmentError("This module requires Python 3.6 or newer.")
 
 import argparse
-import glob
-from itertools import chain
-import numpy as np
-# import os
-import pandas as pd
+# import glob
+# from itertools import chain
+# import pandas as pd
 # import scipy.io as sio
-
-from afnipy.lib_afni1D import Afni1D
-from scipy.stats import pearsonr
-from tabulate import tabulate
+# from afnipy.lib_afni1D import Afni1D
+# from scipy.stats import pearsonr
+# from tabulate import tabulate
 
 from .directory import determine_software_and_root, iterate_features
-from .features import feature_headers, motion_list, regressor_list
 from .subjects import gather_unique_ids
 
-sorted_keys = list(feature_headers.keys())
-sorted_keys.sort(key=str.lower)
-feat_def_table = tabulate(
-    [
-        [
-            key,
-            feature_headers[key].get("name"),
-            feature_headers[key].get("link")
-        ] for key in sorted_keys
-    ],
-    headers=["key", "feature name", "documentation link"]
-)
-del sorted_keys
-
-
-def calc_corr(data1, data2):
-    """Function to calculate Pearson's r between two np.ndarrays or lists
-
-    Parameters
-    ----------
-    data1: np.ndarray or list
-
-    data2: np.ndarray or list
-    """
-    if data1 is not None and data2 is not None:
-        if isinstance(data1, np.ndarray) and data1.shape == data2.shape:
-            return pearsonr(data1.flatten(), data2.flatten())[0]
-        lens = (len(data1), len(data2))
-        if lens[0] == lens[1]:
-            return pearsonr(data1, data2)[0]
-        if lens[0] > lens[1]:
-            return pearsonr(data1[lens[0]-lens[1]:], data2)[0]
-        if lens[0] < lens[1]:
-            return pearsonr(data1, data2[lens[1]-lens[0]:])[0]
-    return float(np.nan)
+# sorted_keys = list(feature_headers.keys())
+# sorted_keys.sort(key=str.lower)
+# feat_def_table = tabulate(
+#     [
+#         [
+#             key,
+#             feature_headers[key].get("name"),
+#             feature_headers[key].get("link")
+#         ] for key in sorted_keys
+#     ],
+#     headers=["key", "feature name", "documentation link"]
+# )
+# del sorted_keys
 
 
 def main():
     parser = argparse.ArgumentParser(
         description="Create a correlation matrix between two C-PAC output "
                     "directories.",
-        epilog="The following features currently have available definitions "
-               "to calculate Pearson's \x1B[3mr\x1B[23m between C-PAC and "
-               f"fmriprep:\n\n{feat_def_table}",
+        # epilog="The following features currently have available definitions "
+        #        "to calculate Pearson's \x1B[3mr\x1B[23m between C-PAC and "
+        #        f"fmriprep:\n\n{feat_def_table}",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
 
@@ -91,7 +65,6 @@ def main():
     # parser.add_argument("--session", type=str,
     #                     help="limit to a single given session")
 
-    # # TODO: handle path to file
     # parser.add_argument("--feature_list", type=str, nargs="*",
     #                     default=regressor_list + motion_list,
     #                     help="default: %(default)s")
@@ -122,6 +95,7 @@ def main():
         for file in b_files:
             features = iterate_features(features, file, specific_id,
                                         b_software, 'b')
+    print(features)
 
     # subject_list = args.subject_list if (
     #     "subject_list" in args and args.subject_list is not None
@@ -182,319 +156,247 @@ def main():
     # )
 
 
-class Subject_Session_Feature:
-    """
-    A class for (subject × session) × feature data
-    """
-    def __init__(self, subject, feature, runs):
-        """
-        Parameters
-        ----------
-        subject: str
-            (subject × session)
+# class Subject_Session_Feature:
+#     """
+#     A class for (subject × session) × feature data
+#     """
+#     def __init__(self, subject, feature, runs):
+#         """
+#         Parameters
+#         ----------
+#         subject: str
+#             (subject × session)
 
-        feature: str
+#         feature: str
 
-        runs: list of dicts
-            [{"software": str, "run_path": str}]
-        """
-        if "_" in subject:
-            self.subject, self.session = subject.split("_", 1)
-        else:
-            self.subject = subject
-            self.session = None
-        self.feature = feature
-        self.paths = (
-            get_paths(
-                self.subject,
-                self.feature,
-                runs[0]["run_path"],
-                runs[0]["software"],
-                self.session
-            ),
-            get_paths(
-                self.subject,
-                self.feature,
-                runs[1]["run_path"],
-                runs[1]["software"],
-                self.session
-            )
-        )
-        self.data = (
-            self.read_feature(
-                self.paths[0],
-                self.feature,
-                runs[0]["software"]
-            ),
-            self.read_feature(
-                self.paths[1],
-                self.feature,
-                runs[1]["software"]
-            )
-        )
-        if self.data[0] is not None:
-            print(f"{runs[0]['software']} {self.feature}: {len(self.data[0])}")
-        if self.data[1] is not None:
-            print(f"{runs[1]['software']} {self.feature}: {len(self.data[1])}")
+#         runs: list of dicts
+#             [{"software": str, "run_path": str}]
+#         """
+#         if "_" in subject:
+#             self.subject, self.session = subject.split("_", 1)
+#         else:
+#             self.subject = subject
+#             self.session = None
+#         self.feature = feature
+#         self.paths = (
+#             get_paths(
+#                 self.subject,
+#                 self.feature,
+#                 runs[0]["run_path"],
+#                 runs[0]["software"],
+#                 self.session
+#             ),
+#             get_paths(
+#                 self.subject,
+#                 self.feature,
+#                 runs[1]["run_path"],
+#                 runs[1]["software"],
+#                 self.session
+#             )
+#         )
+#         self.data = (
+#             self.read_feature(
+#                 self.paths[0],
+#                 self.feature,
+#                 runs[0]["software"]
+#             ),
+#             self.read_feature(
+#                 self.paths[1],
+#                 self.feature,
+#                 runs[1]["software"]
+#             )
+#         )
+#         if self.data[0] is not None:
+#             print(f"{runs[0]['software']} {self.feature}: {len(self.data[0])}")
+#         if self.data[1] is not None:
+#             print(f"{runs[1]['software']} {self.feature}: {len(self.data[1])}")
 
-    def read_feature(self, files, feature, software="C-PAC"):
-        """
-        Method to read a feature from a given file
+#     def read_feature(self, files, feature, software="C-PAC"):
+#         """
+#         Method to read a feature from a given file
 
-        Parameters
-        ----------
-        files: list of str
-            paths to files
+#         Parameters
+#         ----------
+#         files: list of str
+#             paths to files
 
-        feature: str
+#         feature: str
 
-        software: str
+#         software: str
 
-        Returns
-        -------
-        feature: np.ndarray or list or None
-        """
-        if not files:
-            return(None)
-        software = "C-PAC" if software.lower() in [
-            "c-pac",
-            "cpac"
-        ] else software.lower()
+#         Returns
+#         -------
+#         feature: np.ndarray or list or None
+#         """
+#         if not files:
+#             return(None)
+#         software = "C-PAC" if software.lower() in [
+#             "c-pac",
+#             "cpac"
+#         ] else software.lower()
 
-        feature_label = get_feature_label(feature, software)
+#         feature_label = get_feature_label(feature, software)
 
-        if software == "C-PAC":
-            for file in files:
-                if file.endswith(".1D"):
-                    data = Afni1D(file)
-                    if "compcor" in file.lower():
-                        return(data.mat[int(feature_label[1][-1])][1:])
-                    header = data.header[-1] if len(data.header) else ""
-                    header_list = header.split('\t')
-                    if isinstance(feature_label, list):
-                        for fl in feature_label:
-                            if fl in header_list:
-                                return data.mat[header_list.index(fl)]
-                    else:
-                        return data.mat[header_list.index(feature_label)] if (
-                            feature_label in header_list
-                        ) else data.mat[0][1:] if (
-                            len(data.mat[:]) == 1
-                        ) else ([None] * len(data.mat[0][1:]))
-                elif file.endswith('.csv'):
-                    return list(pd.read_csv(
-                        file, sep="\t"
-                    )["Sub-brick"][1:].dropna().astype(float).values)
+#         if software == "C-PAC":
+#             for file in files:
+#                 if file.endswith(".1D"):
+#                     data = Afni1D(file)
+#                     if "compcor" in file.lower():
+#                         return(data.mat[int(feature_label[1][-1])][1:])
+#                     header = data.header[-1] if len(data.header) else ""
+#                     header_list = header.split('\t')
+#                     if isinstance(feature_label, list):
+#                         for fl in feature_label:
+#                             if fl in header_list:
+#                                 return data.mat[header_list.index(fl)]
+#                     else:
+#                         return data.mat[header_list.index(feature_label)] if (
+#                             feature_label in header_list
+#                         ) else data.mat[0][1:] if (
+#                             len(data.mat[:]) == 1
+#                         ) else ([None] * len(data.mat[0][1:]))
+#                 elif file.endswith('.csv'):
+#                     return list(pd.read_csv(
+#                         file, sep="\t"
+#                     )["Sub-brick"][1:].dropna().astype(float).values)
 
-        elif software == "fmriprep":
-            for file in files:
-                if file.endswith(".tsv"):
-                    data = pd.read_csv(file, sep='\t')
-                    if feature_label in data.columns:
-                        return(data[feature_label])
-                elif file.endswith(".txt"):
-                    with open(file) as f:
-                        return([
-                            float(x) for x in [
-                                x.strip() for x in f.readlines()
-                            ][1:]
-                        ])
-        return
-
-
-class Correlation_Matrix:
-    """
-    A class for (subject × session) × feature correlation matrices
-    """
-    def __init__(self, subject_sessions, features, runs):
-        """
-        Parameters
-        ----------
-        subject_sessions: list of strings
-            ["subject_session", ...]
-
-        features: list of strings
-            ["feature", ...]
-
-        runs: list of dicts
-            [{"software": str, "run_path": str}]
-        """
-        self.subjects = subject_sessions
-        self.features = features
-        self.runs = runs
-        self.data = {
-            subject: {
-                feature: Subject_Session_Feature(
-                    subject, feature, runs
-                ) for feature in features
-            } for subject in subject_sessions
-        }
-        self.corrs = np.zeros((len(subject_sessions), len(features)))
-        self.run_pearsonsr()
-
-    def print_filepaths(self, plaintext=False):
-        """
-        Function to print a table
-        """
-        columns = ["\n".join([
-            self.runs[i]["software"], self.runs[i]["run_path"]
-        ]) for i in range(2)]
-        plaintext_columns = ["\n".join([
-            self.runs[i]["software"], wrap(self.runs[i]["run_path"])
-        ]) for i in range(2)]
-        path_table = pd.DataFrame([[
-            "Not found" if not
-            self.data[sub][feat].paths[i] else (
-                self._join_paths(self.data[sub][feat].paths, i)
-            ) for i in range(2)
-        ] for sub in self.data for feat in self.data[sub]],
-                                  columns=columns,
-                                  index=[f"{sub} {feat}" for sub in
-                                         self.subjects for feat in
-                                         self.features])
-        if plaintext:
-            plaintext_path_table = pd.DataFrame([[
-                f"\u001b[3m\u001b[31mNot found\u001b[0m{' '*13}" if not
-                self.data[sub][feat].paths[i] else wrap(
-                    self._join_paths(self.data[sub][feat].paths, i)
-                ) for i in range(2)
-            ] for sub in self.data for feat in self.data[sub]],
-                                               columns=plaintext_columns,
-                                               index=[f"{sub} {feat}" for
-                                                      sub in self.subjects for
-                                                      feat in self.features])
-            print(tabulate(plaintext_path_table,
-                           headers=plaintext_columns))
-        else:
-            stored_options = (
-                pd.options.display.max_rows,
-                pd.options.display.max_colwidth
-            )
-            pd.options.display.max_rows = 999
-            pd.options.display.max_colwidth = 1000
-            try:
-                from IPython.display import display
-                display(path_table)
-            except ImportError:
-                print(path_table)
-            (
-                pd.options.display.max_rows,
-                pd.options.display.max_colwidth
-            ) = stored_options
-            del stored_options
-        return path_table
-
-    def run_correlation(self, subject, feature, data1, data2):
-        """
-        A method to fill a cell in a correlation matrix with Pearson's r
-
-        Parameters
-        ----------
-        subject: int
-            subject index
-
-        feature: int
-            feature index
-
-        data1: np.ndarray or list
-
-        data2: np.ndarray or list
-        """
-        corr = calc_corr(data1, data2)
-        print(
-            f"Running subject: {subject} {feature} "
-            f"correlation score: {str(corr)}"
-        )
-        self.corrs[subject][feature] = round(corr, 3)
-
-    def run_pearsonsr(self):
-        for i, subject in enumerate(self.data):
-            for j, feature in enumerate(self.data[subject]):
-                self.run_correlation(i, j, *self.data[subject][feature].data)
-
-    def _join_paths(self, data_paths, index):
-        return "\n".join([
-            data_path.replace(
-                self.runs[index]["run_path"], "", 1
-            ) if data_path.startswith(
-                self.runs[index]["run_path"]
-            ) else data_path for data_path in data_paths[index]])
+#         elif software == "fmriprep":
+#             for file in files:
+#                 if file.endswith(".tsv"):
+#                     data = pd.read_csv(file, sep='\t')
+#                     if feature_label in data.columns:
+#                         return(data[feature_label])
+#                 elif file.endswith(".txt"):
+#                     with open(file) as f:
+#                         return([
+#                             float(x) for x in [
+#                                 x.strip() for x in f.readlines()
+#                             ][1:]
+#                         ])
+#         return
 
 
-def get_feature_label(feature, software):
-    return feature_headers.get(feature, {}).get(software, "") if (
-        "CompCor" not in feature
-    ) else [
-        f"{feature[:-1]}{feature[-1]}",
-        f"{feature[:-1]}_{feature[-1]}"
-    ] if (
-        software == "C-PAC"
-    ) else f"{feature[0]}_comp_cor_0{feature[-1]}" if (
-        software == "fmriprep") else ""
+# class Correlation_Matrix:
+#     """
+#     A class for (subject × session) × feature correlation matrices
+#     """
+#     def __init__(self, subject_sessions, features, runs):
+#         """
+#         Parameters
+#         ----------
+#         subject_sessions: list of strings
+#             ["subject_session", ...]
+
+#         features: list of strings
+#             ["feature", ...]
+
+#         runs: list of dicts
+#             [{"software": str, "run_path": str}]
+#         """
+#         self.subjects = subject_sessions
+#         self.features = features
+#         self.runs = runs
+#         self.data = {
+#             subject: {
+#                 feature: Subject_Session_Feature(
+#                     subject, feature, runs
+#                 ) for feature in features
+#             } for subject in subject_sessions
+#         }
+#         self.corrs = np.zeros((len(subject_sessions), len(features)))
+#         self.run_pearsonsr()
+
+#     def print_filepaths(self, plaintext=False):
+#         """
+#         Function to print a table
+#         """
+#         columns = ["\n".join([
+#             self.runs[i]["software"], self.runs[i]["run_path"]
+#         ]) for i in range(2)]
+#         plaintext_columns = ["\n".join([
+#             self.runs[i]["software"], wrap(self.runs[i]["run_path"])
+#         ]) for i in range(2)]
+#         path_table = pd.DataFrame([[
+#             "Not found" if not
+#             self.data[sub][feat].paths[i] else (
+#                 self._join_paths(self.data[sub][feat].paths, i)
+#             ) for i in range(2)
+#         ] for sub in self.data for feat in self.data[sub]],
+#                                   columns=columns,
+#                                   index=[f"{sub} {feat}" for sub in
+#                                          self.subjects for feat in
+#                                          self.features])
+#         if plaintext:
+#             plaintext_path_table = pd.DataFrame([[
+#                 f"\u001b[3m\u001b[31mNot found\u001b[0m{' '*13}" if not
+#                 self.data[sub][feat].paths[i] else wrap(
+#                     self._join_paths(self.data[sub][feat].paths, i)
+#                 ) for i in range(2)
+#             ] for sub in self.data for feat in self.data[sub]],
+#                                                columns=plaintext_columns,
+#                                                index=[f"{sub} {feat}" for
+#                                                       sub in self.subjects for
+#                                                       feat in self.features])
+#             print(tabulate(plaintext_path_table,
+#                            headers=plaintext_columns))
+#         else:
+#             stored_options = (
+#                 pd.options.display.max_rows,
+#                 pd.options.display.max_colwidth
+#             )
+#             pd.options.display.max_rows = 999
+#             pd.options.display.max_colwidth = 1000
+#             try:
+#                 from IPython.display import display
+#                 display(path_table)
+#             except ImportError:
+#                 print(path_table)
+#             (
+#                 pd.options.display.max_rows,
+#                 pd.options.display.max_colwidth
+#             ) = stored_options
+#             del stored_options
+#         return path_table
+
+#     def run_correlation(self, subject, feature, data1, data2):
+#         """
+#         A method to fill a cell in a correlation matrix with Pearson's r
+
+#         Parameters
+#         ----------
+#         subject: int
+#             subject index
+
+#         feature: int
+#             feature index
+
+#         data1: np.ndarray or list
+
+#         data2: np.ndarray or list
+#         """
+#         corr = calc_corr(data1, data2)
+#         print(
+#             f"Running subject: {subject} {feature} "
+#             f"correlation score: {str(corr)}"
+#         )
+#         self.corrs[subject][feature] = round(corr, 3)
+
+#     def run_pearsonsr(self):
+#         for i, subject in enumerate(self.data):
+#             for j, feature in enumerate(self.data[subject]):
+#                 self.run_correlation(i, j, *self.data[subject][feature].data)
+
+#     def _join_paths(self, data_paths, index):
+#         return "\n".join([
+#             data_path.replace(
+#                 self.runs[index]["run_path"], "", 1
+#             ) if data_path.startswith(
+#                 self.runs[index]["run_path"]
+#             ) else data_path for data_path in data_paths[index]])
 
 
-def get_paths(subject, feature, run_path, software="C-PAC", session=None):
-    """Method to find a path to specific outputs
-
-    Parameters
-    ----------
-    subject: str or int
-
-    feature: str
-
-    run_path: str
-
-    software: str
-
-    session: str, int or None
-
-    Returns
-    -------
-    paths: list of str
-    """
-    run_path = run_path.rstrip('/')
-    paths = []
-    if software.lower() in ["cpac", "c-pac"]:
-        subject = str(subject)
-        session = f"*{str(session)}*" if session else "*"
-        if feature in regressor_list:
-            toplevel = (f"{run_path}/working/*{subject}{session}/"
-                        "nuisance_regressors_*")
-            if "compcor" in feature.lower():
-                globstrs = [f"{toplevel}/*/"
-                            f"{get_feature_label(feature, 'C-PAC')[1][:-1]}"
-                            "*/*.1D"]
-            else:
-                globstrs = [f"{toplevel}/*/build*/*1D",
-                            f"{toplevel}/_*/"
-                            f"{get_feature_label(feature, 'C-PAC')[1]}/"
-                            "roi_stats.csv"]
-        elif feature in motion_list:
-            # frame wise displacement power
-            globstrs = [f"{run_path}output/*/*{subject}{session}"
-                        "/frame_wise_displacement_power/*/*"]
-        paths = list(chain.from_iterable([
-            glob.glob(globstr) for globstr in globstrs]))
-    elif software.lower() == "fmriprep":
-        fmriprep_subject = fmriprep_sub("_".join([subject, session]))
-        if feature in regressor_list:
-            paths = [
-                f"{run_path}output/fmriprep/{fmriprep_subject}/func/"
-                f"{fmriprep_subject}_task-rest_run-1"
-                "_desc-confounds_regressors.tsv"
-            ]
-        elif feature in motion_list:
-            paths = [
-                f"{run_path}working/fmriprep_wf/"
-                f"single_subject_{fmriprep_subject[4:]}_wf/"
-                "func_preproc_task_rest_run_1_wf/"
-                "bold_confounds_wf/fdisp/fd_power_2012.txt"
-            ]
-    return paths if len(paths) else []
-
-
-def wrap(string, at=25):
-    return '\n'.join([string[i:i+at] for i in range(0, len(string), at)])
+# def wrap(string, at=25):
+#     return '\n'.join([string[i:i+at] for i in range(0, len(string), at)])
 
 
 if __name__ == "__main__":

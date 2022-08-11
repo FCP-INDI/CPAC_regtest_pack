@@ -13,6 +13,7 @@ General Public License for more details.
 You should have received a copy of the GNU Lesser General Public
 License along with CPAC_regtest_pack. If not, see
 <https://www.gnu.org/licenses/>'''
+from typing import Set, Tuple
 import numpy as np
 from bids import BIDSLayout
 
@@ -20,7 +21,7 @@ ATTRIBUTES = {'subject': 'sub', 'session': 'ses', 'acquisition': 'acq',
               'run': 'run', 'task': 'task'}
 
 
-def gather_unique_ids(path):
+def gather_unique_ids(path: str) -> Tuple[Set['UniqueId'], 'BIDSLayout']:
     '''Given a root directory, return a list of UniqueIds and
     a BIDSLayout
 
@@ -32,8 +33,7 @@ def gather_unique_ids(path):
     -------
     set of UniqueId
 
-    BIDSLayout
-    '''
+    BIDSLayout'''
     layout = BIDSLayout(path, validate=False)
     layout_df = layout.to_df()
     unique_ids = set()
