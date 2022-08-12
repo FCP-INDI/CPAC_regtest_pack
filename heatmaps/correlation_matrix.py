@@ -21,6 +21,8 @@ if sys.version_info < (3, 6):
     raise EnvironmentError("This module requires Python 3.6 or newer.")
 
 import argparse
+import os
+import numpy as np
 # import glob
 # from itertools import chain
 # import pandas as pd
@@ -30,6 +32,8 @@ import argparse
 # from tabulate import tabulate
 
 from .directory import determine_software_and_root, iterate_features
+from .features import CalculateCorrelationBetween
+from .heatmaps import generate_heatmap
 from .subjects import gather_unique_ids
 
 # sorted_keys = list(feature_headers.keys())
@@ -95,16 +99,26 @@ def main():
         for file in b_files:
             features = iterate_features(features, file, specific_id,
                                         b_software, 'b')
-    print(features)
-
-    # subject_list = args.subject_list if (
-    #     "subject_list" in args and args.subject_list is not None
-    # ) else generate_subject_list_for_directory(args.outputs_path[0])
-
-    # if "session" in args and args.session is not None:
-    #     subject_list = [
-    #         sub for sub in subject_list if sub.endswith(str(args.session))
-    #     ]
+    corr_data = []
+    var_set = set()
+    for feature_dict in features.values():
+        sub_data = []
+        for label, feature in feature_dict.items():
+            var_set.add(label)
+            corr = CalculateCorrelationBetween(
+                feature['a'], feature['b']
+            )
+            # pylint: disable=unsubscriptable-object
+            corr_coeff = corr if isinstance(corr, float) else corr[0]
+            sub_data.append(corr_coeff)
+        corr_data.append(sub_data)
+    if args.save:
+        output_dir = os.path.join(
+            os.getcwd(), f"correlations_{args.run_name}"
+        )
+    generate_heatmap(np.array(corr_data).T, list(var_set), most_specific_ids,
+                     save_path=os.path.join(output_dir, "heatmap.png") if
+                     args.save else args.save)
 
     # corrs = Correlation_Matrix(
     #     subject_list,
@@ -124,11 +138,6 @@ def main():
 
     # path_table = corrs.print_filepaths(plaintext=True)
 
-    # if args.save:
-    #     output_dir = os.path.join(
-    #         os.getcwd(), "correlations_{0}".format(args.run_name)
-    #     )
-
     #     if not os.path.exists(output_dir):
     #         try:
     #             os.makedirs(output_dir)
@@ -147,9 +156,7 @@ def main():
     #     reshape_corrs(corrs.corrs),
     #     args.feature_list,
     #     subject_list,
-    #     save_path=os.path.join(
-    #         output_dir, "heatmap.png"
-    #     ) if args.save else args.save,
+
     #     title=f"{args.new_outputs_software} "
     #     f"{args.new_outputs_path.split('/')[-1]} vs "
     #     f"{args.old_outputs_software} {args.old_outputs_path.split('/')[-1]}"

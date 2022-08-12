@@ -282,13 +282,13 @@ class CorrelationMethod:
 
         Parameters
         ----------
-        calculate_correlation : heatmaps.correlation_matrix.CalculateCorrelation
+        calculate_correlation : CalculateCorrelation
 
         Returns
         -------
         any
             varies by correlation method
-        """  # noqa: E501  # pylint: disable=line-too-long
+        """
         self.calculate_correlation = calculate_correlation
         return self._run()
 

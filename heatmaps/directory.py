@@ -255,6 +255,10 @@ def iterate_features(features, file, specific_id, software, position):
 
     postion : str
         'a' or 'b'
+
+    Returns
+    -------
+    dict
     """
     if filepath_match_entity(file, specific_id):
         for feature in FEATURES:
