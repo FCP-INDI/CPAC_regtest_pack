@@ -19,8 +19,8 @@ import re
 from logging import warning
 from typing import List, Tuple
 from traits.api import Undefined
-from .features import FEATURES, SOFTWARE, Software
-from .subjects import ATTRIBUTES, UniqueId
+from correlation_features import FEATURES, SOFTWARE, Software, splitext
+from correlation_subjects import ATTRIBUTES, UniqueId
 
 
 def determine_software_and_root(outputs_path):
@@ -125,6 +125,22 @@ def determine_software_and_root(outputs_path):
     return software, outputs_root
 
 
+def entities_from_featurekey(featurekey):
+    """Extract a dictionary of parts to match
+
+    Parameters
+    ----------
+    featurekey : str
+
+    Returns
+    -------
+    entities_to_match : dict
+    """
+    parts = featurekey.split('_')[:-1]
+    return {key: value for key, value in
+            [part.split('-', 1) for part in parts]}
+
+
 def filepath_match_entity(filepath, key, value=None):
     '''Does this filepath match the given entity?
 
@@ -171,8 +187,26 @@ def filepath_match_entity(filepath, key, value=None):
     return False
 
 
+def feature_label_from_filename(filename):
+    """Create a feature label from a given filename
+
+    Parameters
+    ----------
+    filename : str
+
+    Returns
+    -------
+    str
+    """
+    filename, _ = splitext(os.path.basename(filename))
+    parts = filename.split('_')
+    return '_'.join([part for part in parts if any(part.startswith(key) for
+                     key in ['atlas', 'desc', 'space'])] + parts[-1:])
+
+
 def filepath_match_output(filepath, feature, software):
-    """Check if a filepath matches configuration for a given feature and software
+    """Check if a filepath matches configuration for a given feature
+    and software
 
     Parameters
     ----------
@@ -245,7 +279,8 @@ def iterate_features(features, file, specific_id, software, position):
 
     Parameters
     ----------
-    features : dict
+    features : list of str
+        features to try to find
 
     file : str
 
@@ -260,15 +295,16 @@ def iterate_features(features, file, specific_id, software, position):
     -------
     dict
     """
+    feature_dict = {}
     if filepath_match_entity(file, specific_id):
-        for feature in FEATURES:
+        for feature in features:
             if filepath_match_output(file, feature, software):
-                if feature not in features:
-                    features[feature] = {position: file}
+                if feature not in feature_dict:
+                    feature_dict[feature] = {position: file}
                 else:
-                    features[feature][position] = file
-                return features
-    return features
+                    feature_dict[feature][position] = file
+                return feature_dict
+    return feature_dict
 
 
 def separate_working_files(file_list: List[str], outputs: str = '/output/',

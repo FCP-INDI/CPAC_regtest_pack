@@ -14,24 +14,11 @@ You should have received a copy of the GNU Lesser General Public
 License along with CPAC_regtest_pack. If not, see
 <https://www.gnu.org/licenses/>"""
 import argparse
-# import os
-import sys
 from warnings import filterwarnings
-
 import matplotlib as mpl
 import numpy as np
-# import pandas as pd
-import yaml
-
-# from matplotlib import gridspec as GS
 from matplotlib import pyplot as plt
 from scipy import io as sio
-
-from . import features
-try:
-    from subjects import generate_subject_list_for_range
-except ModuleNotFoundError:
-    from .subjects import generate_subject_list_for_range
 
 filterwarnings(
     "ignore",
@@ -93,7 +80,8 @@ def annotate_heatmap(im, data=None, valfmt="{x:.2f}",
     for i in range(data.shape[0]):
         for j in range(data.shape[1]):
             kw.update(color=textcolors[int(im.norm(data[i, j]) < threshold)])
-            text = im.axes.text(j, i, valfmt(data[i, j], None), fontsize=15, **kw)
+            text = im.axes.text(j, i, valfmt(data[i, j], None), fontsize=15,
+                                **kw)
             texts.append(text)
 
     return texts
@@ -259,64 +247,3 @@ def parse_args(args):
 
     parsed = vars(parser.parse_args(args[1:] if len(args)>1 else args))
     return(parsed.pop('config'), parsed)
-
-
-def main(config_path, save_path=None):
-    with open(config_path, 'r') as config_file:
-        config_settings = yaml.safe_load(config_file)
-    generate_heatmap(
-        reshape_corrs(
-            config_settings['correlation_matrix']
-        ) if 'correlation_matrix' in config_settings else
-        features.correlation_matrix,
-        var_list=config_settings[
-            'var_list'
-        ] if 'var_list' in config_settings else (
-            config_settings.get(
-                'regressor_list', []
-            ) + config_settings.get(
-                'motion_list',
-                []
-            )
-        ) if any([
-            l in config_settings for l in [
-                'regressor_list',
-                'motion_list'
-            ]
-        ]) else (
-            features.regressor_list + features.motion_list
-        ),
-        sub_list=generate_subject_list_for_range(
-            (
-                config_settings['subjects']['start'],
-                config_settings['subjects']['stop']
-            ) if all([
-                'subjects' in config_settings,
-                'start' in config_settings['subjects'],
-                'stop' in config_settings['subjects']
-            ]) else config_settings[
-                'subjects'
-            ] if 'subjects' in config_settings else (
-                features.subjects['start'],
-                features.subjects['stop']
-            ), (
-                config_settings['sessions']['start'],
-                config_settings['sessions']['stop']
-            ) if all([
-                'sessions' in config_settings,
-                'start' in config_settings['sessions'],
-                'stop' in config_settings['sessions']
-            ]) else config_settings[
-                'sessions'
-            ] if 'sessions' in config_settings else (
-                features.sessions['start'],
-                features.sessions['stop']
-            )
-        ),
-        save_path=save_path
-    )
-
-
-if __name__ == "__main__":
-    parsed = parse_args(sys.argv)
-    main(parsed[0], **parsed[1])

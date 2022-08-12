@@ -16,7 +16,7 @@ License along with CPAC_regtest_pack. If not, see
 '''
 import inspect
 import os
-import sys
+from shutil import rmtree
 from tempfile import TemporaryDirectory
 from typing import Any, Dict, Optional, Tuple, Union
 import nibabel as nib
@@ -51,7 +51,7 @@ class CalculateCorrelation:
 
     def cleanup(self):
         """Remove temporary working directory"""
-        self._loaded.working_directory.cleanup()
+        rmtree(self._loaded.working_directory)
 
     @property
     def paths(self):
@@ -61,7 +61,7 @@ class CalculateCorrelation:
     @property
     def working_directory(self):
         """Temporary working directory"""
-        return self._loaded.working_directory.name
+        return self._loaded.working_directory
 
 
 class CalculateCorrelationBetween(CalculateCorrelation):
@@ -256,13 +256,14 @@ class CorrelationMethod:
         return pearsonr(*[image.get_fdata().ravel() for image in
                           self.calculate_correlation.images]).statistic
 
-    def pearson_3d_t_correlate(self) -> Tuple[float, float, float]:
+    def pearson_3dtcorrelate(self) -> Tuple[float, float, float]:
         """Pearson correlation via 3dTcorrelate
 
         Returns
         -------
         mean_pearson_r, min_pearson_r, max_pearson_r : float
         """
+        self.correlation_method = 'Pearson_3dTcorrelate'
         tcorrelate = pe.Node(
             TCorrelate(), '3dTcorrelate',
             base_dir=self.calculate_correlation.working_directory)
@@ -271,6 +272,9 @@ class CorrelationMethod:
         tcorrelate.inputs.out_file = os.path.join(
             self.calculate_correlation.working_directory,
             'functional_tcorrelate.nii.gz')
+        if not os.path.exists(tcorrelate.inputs.out_file):
+            with open(tcorrelate.inputs.out_file, 'w', encoding='utf-8'):
+                pass
         tcorrelate.inputs.pearson = True
         correlation_image = nib.load(tcorrelate.run().outputs.out_file)
         non_zeroes = [point for point in
@@ -308,9 +312,8 @@ class _LoadedPaths:
         self._basenames = None
         self.paths = [path1, path2]
         # pylint: disable=consider-using-with,unexpected-keyword-arg
-        self.working_directory = TemporaryDirectory(
-            ignore_cleanup_errors=True
-        ) if sys.version_info >= (3, 10) else TemporaryDirectory()
+        self.working_directory = TemporaryDirectory().name
+        os.makedirs(self.working_directory)
 
     @property
     def basenames(self):
@@ -333,7 +336,7 @@ class _Images(_LoadedPaths):
         elif isinstance(value, nib.nifti1.Nifti1Image):
             self.images[key] = value
             basename, ext = splitext(self.basenames[key])
-            self.paths[key] = os.path.join(self.working_directory.name,
+            self.paths[key] = os.path.join(self.working_directory,
                                            f'{basename}_modified.{ext}')
             nib.save(value, self.paths[key])
 
@@ -350,7 +353,7 @@ class _Matrices(_LoadedPaths):
         elif isinstance(value, np.ndarray):
             self.matrices[key] = value
             basename, ext = splitext(self.basenames[key])
-            self.paths[key] = os.path.join(self.working_directory.name,
+            self.paths[key] = os.path.join(self.working_directory,
                                            f'{basename}_modified.{ext}')
             np.savetxt(self.paths[key], value,
                        delimiter=',' if ext == 'csv' else '\t')
@@ -435,7 +438,8 @@ class Feature:
 
     def set_software_endswith(self, software: 'Software', endswith: str
                               ) -> None:
-        """Define required filename ending for a feature
+        """Define required filename ending for a feature and associated
+        correlation method
 
         Parameters
         ----------
@@ -446,7 +450,7 @@ class Feature:
         self._check_self_software(software)
         self.software[software].endswith = endswith
         if endswith == '_bold.nii.gz':
-            self.set_correlation_method('Pearson')
+            self.set_correlation_method('Pearson_3dTcorrelate')
         if endswith == '_correlations.tsv':
             self.set_correlation_method('Spearman')
         if endswith == '_mask.nii.gz':
@@ -454,7 +458,7 @@ class Feature:
 
     def set_software_entities(self, software: 'Software',
                               entities: Dict[str, str]) -> None:
-        """Define entities to match for a feature
+        """Define BIDS entities to match for a feature for the given software
 
         Parameters
         ----------
