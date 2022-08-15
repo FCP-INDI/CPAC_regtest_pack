@@ -16,6 +16,7 @@ License along with CPAC_regtest_pack. If not, see
 '''
 import inspect
 import os
+from logging import warning
 from shutil import rmtree
 from tempfile import TemporaryDirectory
 from typing import Any, Dict, Optional, Tuple, Union
@@ -80,13 +81,16 @@ class CalculateCorrelationBetween(CalculateCorrelation):
         filetype : str, optional
             'NIfTI' or 'matrix'
         """
-        if filetype is None and any(path.endswith(".nii.gz") for
-                                    path in [path1, path2]):
-            filetype = "nifti"
-        if filetype.lower() == "nifti":
-            return CalculateImageCorrelation(path1, path2)
-        if filetype.lower() == "matrix":
-            return CalculateMatrixCorrelation(path1, path2)
+        if filetype is None:
+            if any(path.endswith(".nii.gz") for path in [path1, path2]):
+                filetype = "nifti"
+            else:
+                filetype = Undefined
+        if isinstance(filetype, str):
+            if filetype.lower() == "nifti":
+                return CalculateImageCorrelation(path1, path2)
+            if filetype.lower() == "matrix":
+                return CalculateMatrixCorrelation(path1, path2)
         raise TypeError("Could not determine type of files. Please provide a "
                         "filetype or try another pair of files")
 
@@ -188,6 +192,32 @@ class CalculateMatrixCorrelation(CalculateCorrelation):
         return tuple(self._loaded.matrices)
 
 
+class CorrelationCoefficient(float):
+    """A subclass of float to hold extra correlation-coefficient-
+    specific attributes
+
+    Parameters
+    ----------
+    x : float_like
+        correlation coefficient
+
+    correlation_type : str
+        Pearson, Spearman, etc.
+
+    correlation_series : array_like
+        point-wise correlation coefficients
+    """
+    # pylint: disable=unused-argument
+    def __new__(cls, x, /, correlation_type, correlation_series=None):
+        return float.__new__(cls, x)
+
+    def __init__(self, x, /, correlation_type, correlation_series=None):
+        float.__init__(x)
+        self.correlation_series = [
+        ] if correlation_series is None else correlation_series
+        self.correlation_type = correlation_type
+
+
 class CorrelationMethod:
     """Methods to correlate pairs of files"""
     def __init__(self, software_a: Optional['Software'] = None,
@@ -250,18 +280,21 @@ class CorrelationMethod:
 
         Returns
         -------
-        pearson_r : float
+        pearson_r : CorrelationCoefficient
         """
         self.correlation_method = 'Pearson'
-        return pearsonr(*[image.get_fdata().ravel() for image in
-                          self.calculate_correlation.images]).statistic
+        # pylint: disable=no-member
+        return CorrelationCoefficient(
+            pearsonr(*[image.get_fdata().ravel() for image in
+                       self.calculate_correlation.images]).statistic,
+            'Pearson')
 
     def pearson_3dtcorrelate(self) -> Tuple[float, float, float]:
         """Pearson correlation via 3dTcorrelate
 
         Returns
         -------
-        mean_pearson_r, min_pearson_r, max_pearson_r : float
+        CorrelationCoefficient
         """
         self.correlation_method = 'Pearson_3dTcorrelate'
         tcorrelate = pe.Node(
@@ -272,17 +305,15 @@ class CorrelationMethod:
         tcorrelate.inputs.out_file = os.path.join(
             self.calculate_correlation.working_directory,
             'functional_tcorrelate.nii.gz')
-        if not os.path.exists(tcorrelate.inputs.out_file):
-            with open(tcorrelate.inputs.out_file, 'w', encoding='utf-8'):
-                pass
         tcorrelate.inputs.pearson = True
         correlation_image = nib.load(tcorrelate.run().outputs.out_file)
         non_zeroes = [point for point in
                       correlation_image.get_fdata().ravel() if point != 0]
-        return [fxn(non_zeroes) for fxn in [np.mean, np.min, np.max]]
+        return CorrelationCoefficient(np.mean(non_zeroes), 'mean(Pearson)',
+                                      non_zeroes)
 
     def run(self, calculate_correlation):
-        """Calculate correlation
+        """Calculate correlation coefficient
 
         Parameters
         ----------
@@ -290,28 +321,37 @@ class CorrelationMethod:
 
         Returns
         -------
-        any
-            varies by correlation method
+        CorrelationCoefficient
         """
+        # pylint: disable=broad-except,lost-exception
         self.calculate_correlation = calculate_correlation
-        return self._run()
+        coefficient = CorrelationCoefficient(np.nan, self.correlation_method)
+        try:
+            coefficient = self._run()
+        except Exception as exception:
+            warning(str(exception))
+        finally:
+            self.calculate_correlation.cleanup()
+            return coefficient
 
     def spearman(self):
         """Spearman correlation
 
         Returns
         -------
-        spearman_r : float
+        spearman_r : CorrelationCoefficient
         """
-        return spearmanr(*(load_matrix_array(file) for file in
-                           self.calculate_correlation.paths)).correlation
+        return CorrelationCoefficient(
+            spearmanr(*(load_matrix_array(file).ravel() for file in
+                      self.calculate_correlation.paths)).correlation,
+            'Spearman')
 
 
-class _LoadedPaths:
+class _LoadedPaths:  # pylint: disable=too-few-public-methods
     def __init__(self, path1, path2):
         self._basenames = None
         self.paths = [path1, path2]
-        # pylint: disable=consider-using-with,unexpected-keyword-arg
+        # pylint: disable=consider-using-with
         self.working_directory = TemporaryDirectory().name
         os.makedirs(self.working_directory)
 
@@ -482,6 +522,44 @@ class Feature:
         """
         self._check_self_software(software)
         self.software[software].regex = regex
+
+
+class Features(dict):
+    """Subclass of dict to hold features but add a method for iterating"""
+    def iterate_features(self,  # pylint: disable=too-many-arguments
+                         features, file, specific_id, software, position):
+        """Loop through features for a given filename, ID, feature,
+        software, and position, returning the first match
+
+        Parameters
+        ----------
+        features : list of str
+            features to try to find
+
+        file : str
+
+        specific_id : UniqueId
+
+        software : Software
+
+        postion : str
+            'a' or 'b'
+
+        Returns
+        -------
+        dict
+        """
+        from correlation_directory import filepath_match_entity, \
+                                          filepath_match_output
+        if filepath_match_entity(file, specific_id):
+            for _feature in features:
+                if filepath_match_output(file, _feature, software):
+                    if _feature not in self:
+                        self[_feature] = {position: file}
+                    else:
+                        self[_feature][position] = file
+                    return self
+        return self
 
 
 def load_matrix_array(filepath):

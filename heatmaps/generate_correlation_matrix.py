@@ -23,18 +23,12 @@ if sys.version_info < (3, 6):
 import argparse
 import os
 import numpy as np
-# import glob
-# from itertools import chain
-# import pandas as pd
-# import scipy.io as sio
-# from afnipy.lib_afni1D import Afni1D
-# from scipy.stats import pearsonr
-# from tabulate import tabulate
 
-from correlation_directory import determine_software_and_root, entities_from_featurekey, \
-                      feature_label_from_filename, iterate_features
+from correlation_directory import determine_software_and_root, \
+                                  entities_from_featurekey, \
+                                  feature_label_from_filename
 from correlation_features import CalculateCorrelationBetween, Feature, \
-                                 FEATURES, SOFTWARE
+                                 Features, FEATURES, SOFTWARE
 from correlation_heatmaps import generate_heatmap
 from correlation_subjects import gather_unique_ids
 
@@ -93,7 +87,6 @@ def main():
                          len(id) == max(len(id) for id in unique_ids)]
     a_files = a_ids[1].get_files()
     b_files = b_ids[1].get_files()
-    features = {specific_id: {} for specific_id in most_specific_ids}
     correlation_matrices = list({feature_label_from_filename(file) for file in
                                  list(a_files.keys()) + list(b_files.keys())
                                  if file.endswith('_correlations.tsv')})
@@ -103,32 +96,41 @@ def main():
             SOFTWARE["C-PAC"], entities_from_featurekey(feature))
         FEATURES[feature].set_software_endswith(SOFTWARE["C-PAC"],
                                                 '_correlations.tsv')
+    features = {specific_id: Features() for specific_id in most_specific_ids}
     for specific_id in most_specific_ids:
         for file in a_files:
-            features[specific_id] = iterate_features(FEATURES,
-                                                     file, specific_id,
-                                                     a_software, 'a')
+            features[specific_id].iterate_features(FEATURES, file, specific_id,
+                                                   a_software, 'a')
         for file in b_files:
-            features[specific_id] = iterate_features(FEATURES,
-                                                     file, specific_id,
-                                                     b_software, 'b')
+            features[specific_id].iterate_features(FEATURES, file, specific_id,
+                                                   b_software, 'b')
     corr_data = []
     var_set = set()
     for feature_dict in features.values():
         sub_data = []
         for label, feature in feature_dict.items():
-            var_set.add(label)
-            corr = FEATURES[label].correlation_method.run(
-                CalculateCorrelationBetween(feature['a'], feature['b']))
-            print(corr)
-            corr_coeff = corr if isinstance(corr, float) else corr[0]
-            sub_data.append(corr_coeff)
+            if 'a' in feature and 'b' in feature:
+                var_set.add(label)
+                if label.endswith('_correlations'):
+                    corr = FEATURES[label].correlation_method.run(
+                        CalculateCorrelationBetween(feature['a'],
+                                                    feature['b'],
+                                                    filetype='matrix'))
+                else:
+                    corr = FEATURES[label].correlation_method.run(
+                        CalculateCorrelationBetween(feature['a'],
+                                                    feature['b']))
+                corr_coeff = corr if isinstance(corr, float) else corr[0]
+                sub_data.append(corr_coeff)
         corr_data.append(sub_data)
         output_dir = os.path.join(
             os.getcwd(), f"correlations_{args.run_name}"
         )
-    generate_heatmap(np.array(corr_data).T, list(var_set), most_specific_ids,
-                     save_path=os.path.join(output_dir, "heatmap.svg"))
+        os.makedirs(output_dir, exist_ok=True)
+    if corr_data and var_set and most_specific_ids:
+        generate_heatmap(np.array(corr_data).T, list(var_set),
+                         most_specific_ids,
+                         save_path=os.path.join(output_dir, "heatmap.svg"))
 
 
 if __name__ == "__main__":

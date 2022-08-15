@@ -137,8 +137,7 @@ def entities_from_featurekey(featurekey):
     entities_to_match : dict
     """
     parts = featurekey.split('_')[:-1]
-    return {key: value for key, value in
-            [part.split('-', 1) for part in parts]}
+    return dict([part.split('-', 1) for part in parts])
 
 
 def filepath_match_entity(filepath, key, value=None):
@@ -271,40 +270,6 @@ def get_version_from_loghead(log_path, line_start, delimiter=None):
                 return version
     warning(f'Version not found in {log_path}')
     return Undefined
-
-
-def iterate_features(features, file, specific_id, software, position):
-    """Loop through features for a given filename, ID, feature,
-    software, and position, returning the first match
-
-    Parameters
-    ----------
-    features : list of str
-        features to try to find
-
-    file : str
-
-    specific_id : UniqueId
-
-    software : Software
-
-    postion : str
-        'a' or 'b'
-
-    Returns
-    -------
-    dict
-    """
-    feature_dict = {}
-    if filepath_match_entity(file, specific_id):
-        for feature in features:
-            if filepath_match_output(file, feature, software):
-                if feature not in feature_dict:
-                    feature_dict[feature] = {position: file}
-                else:
-                    feature_dict[feature][position] = file
-                return feature_dict
-    return feature_dict
 
 
 def separate_working_files(file_list: List[str], outputs: str = '/output/',

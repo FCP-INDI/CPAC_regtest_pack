@@ -93,7 +93,7 @@ def generate_heatmap(corrs, var_list, sub_list, save_path=None, title=None):
 
     Parameters
     ----------
-    corrs: numpy ndarray with shape (number of features, number of subject_sessions)
+    corrs: numpy ndarray with shape (number of features, number of unique IDs)
         This matrix contains the values to plot
     var_list: list of strings
         The labels, in order, of the features (rows)
@@ -108,12 +108,27 @@ def generate_heatmap(corrs, var_list, sub_list, save_path=None, title=None):
     -------
     None
     """
-    fig, ax = plt.subplots(figsize = (50, 15))
-    im, cbar = heatmap(
+    def figsize(shape):
+        if isinstance(shape, tuple):
+            return tuple(figsize(dim) for dim in shape)
+        if shape < 5:
+            return shape * 5
+        return shape
+    if not isinstance(corrs, np.ndarray):
+        corrs = np.array(corrs)
+    # drop any all-NaN rows and columns
+    print(corrs.shape)
+    print(corrs)
+    corrs = corrs[~np.isnan(corrs).all(axis=1)]  # drop all-NaN rows
+    corrs = corrs[:, ~np.isnan(corrs).all(axis=0)]  # drop all-NaN columns
+    print(corrs.shape)
+    print(corrs)
+    fig, ax = plt.subplots(figsize=(figsize(corrs.shape)))
+    im, _ = heatmap(
         corrs, var_list, sub_list, ax=ax, vmin=0, vmax=1,
         cbarlabel="correlation score"
     )
-    texts = annotate_heatmap(im)
+    annotate_heatmap(im)
     if title:
         plt.title(
             label=title,
@@ -134,11 +149,10 @@ def generate_heatmap(corrs, var_list, sub_list, save_path=None, title=None):
             print("No save path or display configured")
 
 
+# pylint: disable=too-many-arguments
 def heatmap(data, row_labels, col_labels, ax=None,
-            cbar_kw={}, cbarlabel="", **kwargs):
-
-    """
-    Create a heatmap from a numpy array and two lists of labels.
+            cbar_kw=None, cbarlabel="", **kwargs):
+    """Create a heatmap from a numpy array and two lists of labels.
 
     Parameters
     ----------
@@ -158,7 +172,6 @@ def heatmap(data, row_labels, col_labels, ax=None,
     **kwargs
         All other arguments are forwarded to `imshow`.
     """
-
     if not ax:
         ax = plt.gca()
 
@@ -166,9 +179,11 @@ def heatmap(data, row_labels, col_labels, ax=None,
     im = ax.imshow(data, **kwargs)
 
     # Create colorbar
+    if cbar_kw is None:
+        cbar_kw = {}
     cbar = ax.figure.colorbar(
-        im, ax=ax, values=None, boundaries=None, fraction=0.03, pad=0.03
-    )
+        im, ax=ax, values=None, boundaries=None, fraction=0.03, pad=0.03,
+        **cbar_kw)
     cbar.ax.set_ylabel(cbarlabel, fontsize=20, rotation=-90, va="bottom")
 
     # We want to show all ticks...
@@ -190,7 +205,7 @@ def heatmap(data, row_labels, col_labels, ax=None,
              rotation_mode="anchor")
 
     # Turn spines off and create white grid.
-    for edge, spine in list(ax.spines.items()):
+    for _, spine in list(ax.spines.items()):
         spine.set_visible(False)
 
     ax.set_xticks(np.arange(data.shape[1]+1)-.5, minor=True)
@@ -199,32 +214,6 @@ def heatmap(data, row_labels, col_labels, ax=None,
     ax.tick_params(which="minor", bottom=False, left=False)
 
     return im, cbar
-
-
-def reshape_corrs(correlation_matrix):
-    """
-    Function to reshape a given correlation matrix file to the shape expected by matplotlib.
-
-    Parameter
-    ---------
-    correlation_matrix: str or np.ndarray
-        path to matrix file or matrix
-
-    Returns
-    -------
-    matrix: np.ndarray
-        numpy n-dimensional array in the shape of the heatmap
-        [features, subject_sessions]
-    """
-    return(
-        abs(np.transpose(
-            sio.loadmat(
-                correlation_matrix_path
-            )['corrs'] if isinstance(
-                correlation_matrix, str
-            ) else correlation_matrix
-        ))
-    )
 
 
 def parse_args(args):
