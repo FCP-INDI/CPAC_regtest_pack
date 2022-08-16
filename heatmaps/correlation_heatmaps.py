@@ -18,18 +18,13 @@ from warnings import filterwarnings
 import matplotlib as mpl
 import numpy as np
 from matplotlib import pyplot as plt
-from scipy import io as sio
 
-filterwarnings(
-    "ignore",
-    "Warning: converting a masked element to nan"
-)
+filterwarnings("ignore", "Warning: converting a masked element to nan")
 
 
 def annotate_heatmap(im, data=None, valfmt="{x:.2f}",
                      textcolors=None, threshold=None, **textkw):
-    """
-    A function to annotate a heatmap.
+    """Annotate a heatmap.
 
     Parameters
     ----------
@@ -80,7 +75,7 @@ def annotate_heatmap(im, data=None, valfmt="{x:.2f}",
     for i in range(data.shape[0]):
         for j in range(data.shape[1]):
             kw.update(color=textcolors[int(im.norm(data[i, j]) < threshold)])
-            text = im.axes.text(j, i, valfmt(data[i, j], None), fontsize=15,
+            text = im.axes.text(j, i, valfmt(data[i, j], None), fontsize=10,
                                 **kw)
             texts.append(text)
 
@@ -88,8 +83,7 @@ def annotate_heatmap(im, data=None, valfmt="{x:.2f}",
 
 
 def generate_heatmap(corrs, var_list, sub_list, save_path=None, title=None):
-    """
-    Function to generate a heatmap.
+    """Generate a heatmap.
 
     Parameters
     ----------
@@ -113,16 +107,13 @@ def generate_heatmap(corrs, var_list, sub_list, save_path=None, title=None):
             return tuple(figsize(dim) for dim in shape)
         if shape < 5:
             return shape * 5
+        if shape < 10:
+            return shape * 2
         return shape
     if not isinstance(corrs, np.ndarray):
         corrs = np.array(corrs)
-    # drop any all-NaN rows and columns
-    print(corrs.shape)
-    print(corrs)
     corrs = corrs[~np.isnan(corrs).all(axis=1)]  # drop all-NaN rows
     corrs = corrs[:, ~np.isnan(corrs).all(axis=0)]  # drop all-NaN columns
-    print(corrs.shape)
-    print(corrs)
     fig, ax = plt.subplots(figsize=(figsize(corrs.shape)))
     im, _ = heatmap(
         corrs, var_list, sub_list, ax=ax, vmin=0, vmax=1,
@@ -199,9 +190,9 @@ def heatmap(data, row_labels, col_labels, ax=None,
                    labeltop=True, labelbottom=False)
 
     # Rotate the tick labels and set their alignment.
-    plt.setp(ax.get_xticklabels(), fontsize=20, rotation=-30, ha="right",
+    plt.setp(ax.get_xticklabels(), fontsize=10, rotation=-30, ha="right",
              rotation_mode="anchor")
-    plt.setp(ax.get_yticklabels(), fontsize=20, ha="right",
+    plt.setp(ax.get_yticklabels(), fontsize=10, rotation=-30, ha="right",
              rotation_mode="anchor")
 
     # Turn spines off and create white grid.
