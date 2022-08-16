@@ -1,11 +1,5 @@
-git+https://github.com/afni/afni.git@master#egg=afnipy&subdirectory=src/python_scripts
-coverage
-git_python
-matplotlib
 nibabel
 numpy
 pandas
 pytest
-pyyaml
 scipy
-tabulate

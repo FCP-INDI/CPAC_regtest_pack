@@ -1,0 +1,48 @@
+# Copyright (C) 2022  C-PAC Developers
+# This file is part of CPAC_regtest_pack.
+# CPAC_regtest_pack is free software: you can redistribute it and/or modify it under the terms of the GNU Lesser General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+# CPAC_regtest_pack is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public License for more details.
+# You should have received a copy of the GNU Lesser General Public License along with CPAC_regtest_pack. If not, see <https://www.gnu.org/licenses/> 
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cpac_heatmaps"
+description = 'Generate heatmaps of correlations between two pipeline runs'
+readme = "README.md"
+requires-python = ">=3.7"
+license = "LGPL-3.0-or-later"
+keywords = []
+authors = [
+  { name = "C-PAC Developers", email = "CMI_CPAC_Support@childmind.org" },
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3.7",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Programming Language :: Python :: Implementation :: PyPy",
+]
+dependencies = []
+dynamic = ["version"]
+
+[project.urls]
+Documentation = "https://github.com/FCP-INDI/CPAC_regtest_pack/heatmaps#readme"
+Issues = "https://github.com/FCP-INDI/CPAC_regtest_pack/issues?q=is%3Aopen+is%3Aissue+label%3Aheatmaps"
+Source = "https://github.com/FCP-INDI/CPAC_regtest_pack/heatmaps"
+
+[tool.hatch.build]
+sources = ["src"]
+
+[tool.hatch.version]
+path = "src/cpac_heatmaps/__about__.py"
+
+[project.scripts]
+c-pac-heatmaps = "src.cpac_heatmaps.generate:main"
+cpac_heatmaps = "src.cpac_heatmaps.generate:main"

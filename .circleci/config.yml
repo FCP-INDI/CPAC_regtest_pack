@@ -11,6 +11,7 @@ jobs:
             export PATH=/home/circleci/.local/bin:$PATH
             mkdir test-results
             pip install --user -r requirements.txt
+            pip install --user coverage
             set +e
             coverage run -m pytest --junitxml=test-results/junit.xml
             coverage report --include="./*" --omit="/home/circleci/.local/*"

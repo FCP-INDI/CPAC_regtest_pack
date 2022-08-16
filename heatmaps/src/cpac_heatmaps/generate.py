@@ -24,13 +24,13 @@ import argparse
 import os
 import numpy as np
 
-from correlation_directory import determine_software_and_root, \
-                                  entities_from_featurekey, \
-                                  feature_label_from_filename
-from correlation_features import CalculateCorrelationBetween, Feature, \
-                                 Features, FEATURES, SOFTWARE
-from correlation_heatmaps import generate_heatmap
-from correlation_subjects import gather_unique_ids
+from .directory import determine_software_and_root, \
+                                   entities_from_featurekey, \
+                                   feature_label_from_filename
+from .features import CalculateCorrelationBetween, Feature, \
+                                  Features, FEATURES, SOFTWARE
+from .heatmaps import generate_heatmap
+from .subjects import gather_unique_ids
 
 # sorted_keys = list(feature_headers.keys())
 # sorted_keys.sort(key=str.lower)
@@ -48,6 +48,7 @@ from correlation_subjects import gather_unique_ids
 
 
 def main():
+    """Main function to run when called from commandline"""
     parser = argparse.ArgumentParser(
         description="Create a correlation matrix between two C-PAC output "
                     "directories.",

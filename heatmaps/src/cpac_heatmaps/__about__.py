@@ -1,4 +1,4 @@
-'''Module to generate heatmaps between pairs of output directories
+"""Packaging info
 
 Copyright (C) 2022  C-PAC Developers
 This file is part of CPAC_regtest_pack.
@@ -12,4 +12,6 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser
 General Public License for more details.
 You should have received a copy of the GNU Lesser General Public
 License along with CPAC_regtest_pack. If not, see
-<https://www.gnu.org/licenses/>'''
+<https://www.gnu.org/licenses/>
+"""
+__version__ = '1.8.5.dev0'

@@ -19,8 +19,8 @@ import re
 from logging import warning
 from typing import List, Tuple
 from traits.api import Undefined
-from correlation_features import FEATURES, SOFTWARE, Software, splitext
-from correlation_subjects import ATTRIBUTES, UniqueId
+from .features import FEATURES, SOFTWARE, Software, splitext
+from .subjects import ATTRIBUTES, UniqueId
 
 
 def determine_software_and_root(outputs_path):
