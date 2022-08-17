@@ -208,10 +208,10 @@ class CorrelationCoefficient(float):
         point-wise correlation coefficients
     """
     # pylint: disable=unused-argument
-    def __new__(cls, x, /, correlation_type, correlation_series=None):
+    def __new__(cls, x, correlation_type, correlation_series=None):
         return float.__new__(cls, x)
 
-    def __init__(self, x, /, correlation_type, correlation_series=None):
+    def __init__(self, x, correlation_type, correlation_series=None):
         float.__init__(x)
         self.correlation_series = [
         ] if correlation_series is None else correlation_series
@@ -230,13 +230,13 @@ class CorrelationMethod:
         self.calculate_correlation = Undefined
         self.correlation_method = Undefined
         self._run = Undefined
-        self.software = {'a': software_a, 'b': software_b} if (
+        self.software = (software_a, software_b) if (
             isinstance(software_a, Software) and (software_b, Software)
-        ) else {'a': Undefined, 'b': Undefined}
+        ) else (Undefined, Undefined)
 
     def __repr__(self):
-        return (f'{self.correlation_method}: {self.software["a"]}, '
-                f'{self.software["b"]}')
+        return (f'{self.correlation_method}: {self.software[0]}, '
+                f'{self.software[1]}')
 
     def __setattr__(self, __name: str, __value: Any) -> None:
         self.__dict__[__name] = __value
@@ -247,10 +247,6 @@ class CorrelationMethod:
 
     def dice(self) -> float:
         """Dice coefficient
-
-        Parameters
-        ----------
-        file_a, file_b : str
 
         Returns
         -------
@@ -274,10 +270,6 @@ class CorrelationMethod:
     def pearson(self):
         """Pearson correlation
 
-        Parameters
-        ----------
-        file_a, file_b : str
-
         Returns
         -------
         pearson_r : CorrelationCoefficient
@@ -288,6 +280,29 @@ class CorrelationMethod:
             pearsonr(*[image.get_fdata().ravel() for image in
                        self.calculate_correlation.images]).statistic,
             'Pearson')
+
+    def pearson_3dcorrelate(self) -> Tuple[float, float, float]:
+        """Pearson correlation via 3dcorrelate
+
+        Returns
+        -------
+        CorrelationCoefficient
+        """
+        self.correlation_method = 'Pearson_3dTcorrelate'
+        tcorrelate = pe.Node(
+            TCorrelate(), '3dTcorrelate',
+            base_dir=self.calculate_correlation.working_directory)
+        tcorrelate.inputs.xset, tcorrelate.inputs.yset = (
+            self.calculate_correlation.paths)
+        tcorrelate.inputs.out_file = os.path.join(
+            self.calculate_correlation.working_directory,
+            'functional_tcorrelate.nii.gz')
+        tcorrelate.inputs.pearson = True
+        correlation_image = nib.load(tcorrelate.run().outputs.out_file)
+        non_zeroes = [point for point in
+                      correlation_image.get_fdata().ravel() if point != 0]
+        return CorrelationCoefficient(np.mean(non_zeroes), 'mean(Pearson)',
+                                      non_zeroes)
 
     def pearson_3dtcorrelate(self) -> Tuple[float, float, float]:
         """Pearson correlation via 3dTcorrelate
@@ -331,7 +346,7 @@ class CorrelationMethod:
         except Exception as exception:
             warning(str(exception))
         finally:
-            self.calculate_correlation.cleanup()
+            # self.calculate_correlation.cleanup()
             return coefficient
 
     def spearman(self):
@@ -341,6 +356,11 @@ class CorrelationMethod:
         -------
         spearman_r : CorrelationCoefficient
         """
+        print(self.calculate_correlation.paths)
+        files = [load_matrix_array(file).ravel() for file in
+                 self.calculate_correlation.paths]
+        print(files)
+        print(spearmanr(*files))
         return CorrelationCoefficient(
             spearmanr(*(load_matrix_array(file).ravel() for file in
                       self.calculate_correlation.paths)).correlation,
@@ -403,24 +423,34 @@ class Software:
     """Class to store software name and version"""
     # pylint: disable=too-few-public-methods
     def __init__(self, name: str,
-                 version: Union[str, UndefinedType] = Undefined) -> None:
+                 version: Optional[Union[str, UndefinedType]] = Undefined,
+                 config: Optional[str] = None) -> None:
         """
         Parameters
         ----------
         name : str
 
-        version : str, Undefined or None
+        version : str, Undefined, optional
+
+        config : str, optional
+           name of pipeline config
         """
-        if not isinstance(version, (str, UndefinedType)):
+        if version is not None and not isinstance(version,
+                                                  (str, UndefinedType)):
             raise TypeError("Software version must be string or Undefined")
+        self.config = config if config is not None else Undefined
         self.name = name
         self.version = f"v{version.lstrip('v')}" if isinstance(
             version, str) else version
 
     def __repr__(self) -> None:
         if isinstance(self.version, str):
-            return " ".join([self.name, self.version])
-        return f"{self.name} unknown version"
+            _repr = " ".join([self.name, self.version])
+        else:
+            _repr = f"{self.name} unknown version"
+        if self.config is not Undefined:
+            return f"{_repr}: {self.config}"
+        return _repr
 
 
 class SoftwareFeature:
@@ -451,12 +481,15 @@ class Feature:
         ----------
         name : str
 
-        link : str, optional
+        correlation_method, filetype, link : str, optional
         """
         self.name = name
+        self.filetype = kwargs.get('filetype', Undefined)
         self.link = kwargs.get('link', Undefined)
         self.software = {}
-        self.correlation_method = Undefined
+        self.correlation_method = self.set_correlation_method(kwargs[
+            'correlation_method'
+        ]) if 'correlation_method' in kwargs else Undefined
 
     def __repr__(self) -> None:
         return self.name
@@ -489,12 +522,6 @@ class Feature:
         """
         self._check_self_software(software)
         self.software[software].endswith = endswith
-        if endswith == '_bold.nii.gz':
-            self.set_correlation_method('Pearson_3dTcorrelate')
-        if endswith == '_correlations.tsv':
-            self.set_correlation_method('Spearman')
-        if endswith == '_mask.nii.gz':
-            self.set_correlation_method('Dice')
 
     def set_software_entities(self, software: 'Software',
                               entities: Dict[str, str]) -> None:
@@ -522,44 +549,6 @@ class Feature:
         """
         self._check_self_software(software)
         self.software[software].regex = regex
-
-
-class Features(dict):
-    """Subclass of dict to hold features but add a method for iterating"""
-    def iterate_features(self,  # pylint: disable=too-many-arguments
-                         features, file, specific_id, software, position):
-        """Loop through features for a given filename, ID, feature,
-        software, and position, returning the first match
-
-        Parameters
-        ----------
-        features : list of str
-            features to try to find
-
-        file : str
-
-        specific_id : UniqueId
-
-        software : Software
-
-        postion : str
-            'a' or 'b'
-
-        Returns
-        -------
-        dict
-        """
-        from correlation_directory import filepath_match_entity, \
-                                          filepath_match_output
-        if filepath_match_entity(file, specific_id):
-            for _feature in features:
-                if filepath_match_output(file, _feature, software):
-                    if _feature not in self:
-                        self[_feature] = {position: file}
-                    else:
-                        self[_feature][position] = file
-                    return self
-        return self
 
 
 def load_matrix_array(filepath):
@@ -692,13 +681,11 @@ def _load_matrix_array(filepath, delimiters=None):
         except ValueError:
             raise ValueError(f'File "{filepath}" does not seem to represent '
                              'a square matrix')
+    if all(matrix_array[i, i] == 0 for i in range(matrix_array.shape[0])):
+        # replace all-0 diagonal with all-1 diagonal
+        matrix_array = matrix_array + np.eye(matrix_array.shape[0])
     return matrix_array
 
 
 SOFTWARE = {key: Software(key) for key in
             ["C-PAC", "fMRIPrep", "XCP-D", "xcpEngine"]}
-FEATURES = {key: Feature(key) for key in ["space-template_desc-preproc_bold"]}
-FEATURES["space-template_desc-preproc_bold"].set_software_entities(
-    SOFTWARE["C-PAC"], {'space': 'template', 'desc': 'preproc.*'})
-for feature in ["space-template_desc-preproc_bold"]:
-    FEATURES[feature].set_software_endswith(SOFTWARE["C-PAC"], '_bold.nii.gz')

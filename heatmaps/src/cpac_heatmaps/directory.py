@@ -18,8 +18,9 @@ import os
 import re
 from logging import warning
 from typing import List, Tuple
+import yaml
 from traits.api import Undefined
-from .features import FEATURES, SOFTWARE, Software, splitext
+from .features import Software, splitext
 from .subjects import ATTRIBUTES, UniqueId
 
 
@@ -78,6 +79,15 @@ def determine_software_and_root(outputs_path):
 
     # C-PAC
     if 'log' in ls_outputs_path and 'output' in ls_outputs_path:
+        pipeline_config_file = [file for file in ls_outputs_path if
+                                file.startswith('cpac_pipeline') and
+                                file.endswith('Z.yml')]
+        pipeline_config = None
+        if pipeline_config_file:
+            with open(os.path.join(outputs_path, pipeline_config_file[0]),
+                      'r', encoding='utf-8') as pcf:
+                pipeline_config = yaml.safe_load(pcf).get(
+                    'pipeline_setup', {}).get('pipeline_name')
         log_dir = os.path.join(outputs_path, 'log')
         pipelines = [dir for dir in os.listdir(log_dir) if
                      os.path.isdir(os.path.join(log_dir, dir))]
@@ -91,9 +101,9 @@ def determine_software_and_root(outputs_path):
                 if os.path.exists(pypeline_logfile):
                     return Software('C-PAC',
                                     get_version_from_loghead(pypeline_logfile,
-                                                             'C-PAC', ':')
-                                    ), outputs_path
-        return Software('C-PAC'), outputs_path
+                                                             'C-PAC', ':'),
+                                    pipeline_config), outputs_path
+        return Software('C-PAC', config=pipeline_config), outputs_path
     # fMRIPrep / XCPD
     version = _fx_version('fmriprep', 'performed using *fMRIPrep*')
     if version:
@@ -150,12 +160,17 @@ def filepath_match_entity(filepath, key, value=None):
     key : str, UniqueId, dict, or iterable
 
     value : str, optional
+        if numeric, tries to match integer value
+        can include wildcards '*' or '?'
+        can be negated by prefixing with '!'
 
     Returns
     -------
     bool
     '''
     # pylint: disable=too-many-return-statements
+    if filepath is Undefined:
+        return False
     basename = os.path.basename(filepath)
     if isinstance(key, UniqueId):
         return all(
@@ -176,7 +191,18 @@ def filepath_match_entity(filepath, key, value=None):
         if f_key not in basename:
             return False
         check_value = basename.split(f_key, 1)[-1].split('_')[0]
+        if key == 'desc' and isinstance(value, str) and isinstance(
+                check_value, str):
+            num_suf = '-0123456789'
+            check_value = check_value.rstrip(num_suf)
+            value = value.rstrip(num_suf)
         if isinstance(value, (str, int, float)):
+            if isinstance(value, str):
+                if value.startswith('!'):
+                    # return bool(not-match)
+                    return not filepath_match_entity(filepath, key, value[1:])
+                # convert wildcards to regex
+                value = value.replace('*', '.*').replace('?', '.?')
             if str(value).isnumeric():
                 try:
                     return int(check_value) == int(value)
@@ -201,34 +227,6 @@ def feature_label_from_filename(filename):
     parts = filename.split('_')
     return '_'.join([part for part in parts if any(part.startswith(key) for
                      key in ['atlas', 'desc', 'space'])] + parts[-1:])
-
-
-def filepath_match_output(filepath, feature, software):
-    """Check if a filepath matches configuration for a given feature
-    and software
-
-    Parameters
-    ----------
-    filepath : str
-
-    feature : str
-
-    software : Software
-
-    Returns
-    -------
-    bool
-    """
-    if software.name not in SOFTWARE:
-        return False
-    software_features = FEATURES[feature].software[SOFTWARE[software.name]]
-    if hasattr(software_features, 'endswith'):
-        if not filepath.endswith(software_features.endswith):
-            return False
-    if hasattr(software_features, 'entities'):
-        if not filepath_match_entity(filepath, software_features.entities):
-            return False
-    return True
 
 
 def get_version_from_loghead(log_path, line_start, delimiter=None):
