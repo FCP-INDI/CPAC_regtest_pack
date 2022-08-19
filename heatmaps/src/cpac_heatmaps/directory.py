@@ -191,11 +191,8 @@ def filepath_match_entity(filepath, key, value=None):
         if f_key not in basename:
             return False
         check_value = basename.split(f_key, 1)[-1].split('_')[0]
-        if key == 'desc' and isinstance(value, str) and isinstance(
-                check_value, str):
-            num_suf = '-0123456789'
-            check_value = check_value.rstrip(num_suf)
-            value = value.rstrip(num_suf)
+        check_value = _strip_int_suffix(check_value)
+        value = _strip_int_suffix(value)
         if isinstance(value, (str, int, float)):
             if isinstance(value, str):
                 if value.startswith('!'):
@@ -212,6 +209,32 @@ def filepath_match_entity(filepath, key, value=None):
     return False
 
 
+def _strip_int_suffix(label):
+    """Drop integer suffixes from C-PAC fork descriptions
+
+    Examples
+    --------
+    >>> _strip_int_suffix('desc-mean-1_bold.nii.gz')
+    'desc-mean_bold.nii.gz'
+    >>> _strip_int_suffix({'desc': 'mean-1'})
+    {'desc': 'mean'}
+    """
+    if isinstance(label, dict):
+        return {key: (value.rstrip('-0123456789') if
+                      key == 'desc' and isinstance(value, str) and
+                      '-' in value else value) for key, value in label.items()}
+    if isinstance(label, str):
+        parts = label.split('_')
+        index = [i for i, part in enumerate(parts) if part.startswith('desc-')]
+        if index:
+            index = index[0]
+            parts[index] = '-'.join(
+                list(_strip_int_suffix(dict(
+                    [parts[index].split('-', 1)])).items())[0])
+        return '_'.join(parts)
+    return label
+
+
 def feature_label_from_filename(filename):
     """Create a feature label from a given filename
 
@@ -224,7 +247,7 @@ def feature_label_from_filename(filename):
     str
     """
     filename, _ = splitext(os.path.basename(filename))
-    parts = filename.split('_')
+    parts = _strip_int_suffix(filename).split('_')
     return '_'.join([part for part in parts if any(part.startswith(key) for
                      key in ['atlas', 'desc', 'space'])] + parts[-1:])
 
@@ -247,11 +270,6 @@ def get_version_from_loghead(log_path, line_start, delimiter=None):
     if delimiter is None:
         delimiter = line_start
     with open(log_path, 'r', encoding='utf-8') as log_file:
-        # for line in log_file.readline():
-        #     line = line.strip()
-        #     print(line)
-        #     print(line_start)
-        #     print(line.startswith(line_start))
         try:
             version_loglines = [line.strip() for line in [
                 log_file.readline() for _ in range(10)] if

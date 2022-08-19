@@ -16,6 +16,7 @@ License along with CPAC_regtest_pack. If not, see
 '''
 import inspect
 import os
+from itertools import chain, permutations
 from logging import warning
 from shutil import rmtree
 from tempfile import TemporaryDirectory
@@ -219,7 +220,16 @@ class CorrelationCoefficient(float):
 
 
 class CorrelationMethod:
-    """Methods to correlate pairs of files"""
+    """Methods to correlate pairs of files
+
+    Attributes
+    ----------
+    calculate_correlation : CalculateCorrelation
+
+    correlation_method : CorrelationMethod
+
+    software : 2-tuple of (Software, Software)
+    """
     def __init__(self, software_a: Optional['Software'] = None,
                  software_b: Optional['Software'] = None) -> None:
         """
@@ -243,7 +253,7 @@ class CorrelationMethod:
         if __name == 'correlation_method' and __value is not Undefined:
             correlation_method = __value.lower()
             if hasattr(self, correlation_method):
-                self._run = getattr(self, correlation_method)
+                self._run = self.correlation_method
 
     def dice(self) -> float:
         """Dice coefficient
@@ -356,7 +366,6 @@ class CorrelationMethod:
         -------
         spearman_r : CorrelationCoefficient
         """
-        print(self.calculate_correlation.paths)
         files = [load_matrix_array(file).ravel() for file in
                  self.calculate_correlation.paths]
         print(files)
@@ -420,7 +429,19 @@ class _Matrices(_LoadedPaths):
 
 
 class Software:
-    """Class to store software name and version"""
+    """Class to store software name and version
+
+    Attributes
+    ----------
+    config : str
+        name of the pipeline config
+
+    name : str
+        name of software package
+
+    version : str
+        version of software package
+    """
     # pylint: disable=too-few-public-methods
     def __init__(self, name: str,
                  version: Optional[Union[str, UndefinedType]] = Undefined,
@@ -454,7 +475,22 @@ class Software:
 
 
 class SoftwareFeature:
-    """Class to store software information related to a feature"""
+    """Class to store software information related to a feature
+
+    Attributes
+    ----------
+    endswith : str
+        filename ending of features for given software
+
+    entities : list of dicts of strings
+        features to match for given software and feature
+
+    name : str
+        name of feature
+
+    regex : str
+        pattern to look for for given software and feature
+    """
     # pylint: disable=too-few-public-methods
     def __init__(self, name: Optional[str] = None) -> None:
         """
@@ -474,7 +510,23 @@ class SoftwareFeature:
 
 
 class Feature:
-    """Class to store features to compare"""
+    """Class to store features to compare
+
+    Attributes
+    ----------
+    correlation_method : CorrelationMethod
+
+    files : list of 2-tuples of strings
+        pairs of files to compare
+
+    filetype : str
+
+    link : str
+
+    name : str
+
+    files : 2-tuple of lists of strings
+    """
     def __init__(self, name: str, **kwargs) -> None:
         """
         Parameters
@@ -483,24 +535,46 @@ class Feature:
 
         correlation_method, filetype, link : str, optional
         """
-        self.name = name
+        self.correlation_method = Undefined
+        self._files = ([], [])  # each list is all matching files for one
         self.filetype = kwargs.get('filetype', Undefined)
         self.link = kwargs.get('link', Undefined)
-        self.software = {}
-        self.correlation_method = self.set_correlation_method(kwargs[
-            'correlation_method'
-        ]) if 'correlation_method' in kwargs else Undefined
+        self.name = name
+        self.softwarefeature = {}
+        if 'correlation_method' in kwargs:
+            self.set_correlation_method(kwargs['correlation_method'])
 
     def __repr__(self) -> None:
         return self.name
 
     def _check_self_software(self, software: 'Software') -> None:
-        if software not in self.software:
-            self.software[software] = SoftwareFeature(': '.join([
-                str(software), self.name]))
+        if software not in self.softwarefeature:
+            self.softwarefeature[software] = SoftwareFeature(self.name)
+
+    def add_file(self, position, file):
+        """Add a file to list of matching files
+
+        Parameters
+        ----------
+        position : int
+           0 or 1
+
+        file : str
+           filepath
+        """
+        if position == 0:
+            self._files = (self._files[0] + [file], self._files[1])
+        elif position == 1:
+            self._files = (self._files[0], self._files[1])
+
+    @property
+    def files(self):
+        """list of 2-tuples of strings (pairs of files to compare)"""
+        return list(chain.from_iterable(zip(permutation, self._files[1]) for
+                    permutation in permutations(self._files[0])))
 
     def set_correlation_method(self, correlation_method: str) -> None:
-        """Set feature's correlation method
+        """Set feature's correlation method in-place
 
         Parameters
         ----------
@@ -521,7 +595,7 @@ class Feature:
         endswith : str
         """
         self._check_self_software(software)
-        self.software[software].endswith = endswith
+        self.softwarefeature[software].endswith = endswith
 
     def set_software_entities(self, software: 'Software',
                               entities: Dict[str, str]) -> None:
@@ -536,7 +610,7 @@ class Feature:
             match BIDS values
             """
         self._check_self_software(software)
-        self.software[software].entities = entities
+        self.softwarefeature[software].entities = entities
 
     def set_software_regex(self, software: 'Software', regex: str) -> None:
         """Define regex for finding feature
@@ -548,7 +622,7 @@ class Feature:
         regex : str
         """
         self._check_self_software(software)
-        self.software[software].regex = regex
+        self.softwarefeature[software].regex = regex
 
 
 def load_matrix_array(filepath):
@@ -671,9 +745,9 @@ def _load_matrix_array(filepath, delimiters=None):
         if len(delimiters) != 2:
             raise non_iterable_delimiter
     try:
-        matrix_array = np.loadtxt(filepath, delimiters.pop(0))
+        matrix_array = np.loadtxt(filepath, delimiter=delimiters.pop(0))
     except ValueError:
-        matrix_array = np.loadtxt(filepath, delimiters.pop(0))
+        matrix_array = np.loadtxt(filepath, delimiter=delimiters.pop(0))
     if (len(matrix_array.shape) != 2 and
             matrix_array.shape[0] != matrix_array.shape[1]):
         try:

@@ -59,26 +59,25 @@ def main():
     corr_data = []
     var_list = []
     for label, feature in matchup.features.items():
-        print(feature)
-        print(type(feature))
-        if feature is not Undefined and Undefined not in feature:
-            if str(label).endswith('_correlations'):
-                corr = feature.correlation_method.run(
-                    CalculateCorrelationBetween(*feature,
-                                                filetype='matrix'))
-            else:
-                corr = feature.correlation_method.run(
-                    CalculateCorrelationBetween(*feature))
-            corr_coeff = corr if isinstance(corr, float) else corr[0]
-            if corr_coeff is not np.nan:
-                if feature.correlation_method.basenames[
-                    0
-                ] == feature.correlation_method.basenames[1]:
-                    var_list.append(label)
+        if feature is not Undefined:
+            for filepair in feature.files:
+                if str(label).endswith('_correlations'):
+                    corr = feature.correlation_method.run(
+                        CalculateCorrelationBetween(*filepair,
+                                                    filetype='matrix'))
                 else:
-                    var_list.append('\n'.join(
-                        feature.correation_method.basenames))
-                corr_data.append(corr_coeff)
+                    corr = feature.correlation_method.run(
+                        CalculateCorrelationBetween(*filepair))
+                corr_coeff = corr if isinstance(corr, float) else corr[0]
+                if corr_coeff is not np.nan:
+                    if feature.correlation_method.basenames[
+                        0
+                    ] == feature.correlation_method.basenames[1]:
+                        var_list.append(label)
+                    else:
+                        var_list.append('\n'.join(
+                            feature.correation_method.basenames))
+                    corr_data.append(corr_coeff)
         output_dir = os.path.join(
             os.getcwd(), f"correlations_{args.run_name}"
         )

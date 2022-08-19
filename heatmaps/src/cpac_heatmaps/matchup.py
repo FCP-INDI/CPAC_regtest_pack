@@ -22,10 +22,15 @@ from .subjects import gather_unique_ids
 
 
 class Features(dict):
-    """Subclass of dict to hold features but add a method for iterating"""
+    """Subclass of dict to hold features but add a method for iterating
+
+    keys are strings
+
+    values are lists of Feature
+    """
     def iterate_features(self, file, specific_id, software, position):
         """Loop through features for a given filename, ID, feature,
-        software, and position, returning the first match
+        software, and position, adding matches to appropriate Feature within
 
         Parameters
         ----------
@@ -46,13 +51,12 @@ class Features(dict):
         dict
         """
         if filepath_match_entity(file, specific_id):
-            for _feature in self:
-                if self.filepath_match_output(file, _feature, software):
-                    if _feature not in self:
-                        self[_feature] = [Undefined, Undefined]
-                    else:
-                        self[_feature][position] = file
-                    return self
+            for label, feature in self.items():
+                if self.filepath_match_output(file, label, software):
+                    print(56)
+                    print(f'{label}?')
+                    print(file)
+                    feature.add_file(position, file)
         return self
 
     def filepath_match_output(self, filepath, feature, software):
@@ -71,14 +75,33 @@ class Features(dict):
         -------
         bool
         """
+        # --------------------------------------------------------------
+        # This section will need refactoring if we need version-specific
+        # matching
         if software.name not in SOFTWARE:
+            # print(82)
+            # print(software.name)
+            # print(SOFTWARE)
             return False
-        software_features = self[feature].software[SOFTWARE[software.name]]
+        software = SOFTWARE[software.name]
+        # ---------------------------------------------------------------
+        if feature not in self:
+            # print(87)
+            # print(feature)
+            # print(self)
+            return False
+        software_features = self[feature].softwarefeature[software]
         if hasattr(software_features, 'endswith'):
             if not filepath.endswith(software_features.endswith):
+                # print(93)
+                # print(feature)
+                # print(software_features.endswith)
                 return False
         if hasattr(software_features, 'entities'):
             if not filepath_match_entity(filepath, software_features.entities):
+                # print(99)
+                # print(feature)
+                # print(software_features.entities)
                 return False
         return True
 
@@ -88,14 +111,17 @@ class Matchup:  # pylint: disable=too-many-instance-attributes
 
     Attributes
     ----------
+    features : Features
+        dict of {str: Feature}
+
     files : 2-tuple of list of str
         for each output, all found files
 
-    ids : 2-tuple of list of 2-tuples
+    ids : 2-tuple of list of UniqueIds
         for each output, list of strings of BIDS entities describing
         one or more outputs
 
-    most_specific_ids : list of str
+    most_specific_ids : list of UniqueId
         subset of unique_ids with the greatest number of entities
 
     root : 2-tuple of str
@@ -129,14 +155,11 @@ class Matchup:  # pylint: disable=too-many-instance-attributes
         self.most_specific_ids = [id for id in self.unique_ids if
                                   len(id) == max(len(id) for id in
                                                  self.unique_ids)]
-        self.features = {specific_id: Features() for specific_id in
-                         self.most_specific_ids}
+        self.features = Features()
 
     @property
     def ids(self):
-        """
-        2-tuple of lists of cpac_heatmaps.subjects.UniqueID
-        """
+        """2-tuple of lists of UniqueIds"""
         return tuple(self._ids)
 
     def iterate_features(self):
@@ -147,12 +170,14 @@ class Matchup:  # pylint: disable=too-many-instance-attributes
         for specific_id in self.most_specific_ids:
             for i in range(2):
                 for file in self.files[i]:
-                    self.features[specific_id].iterate_features(
+                    self.features.iterate_features(
                         file, specific_id, self.software[i], i)
             for label, feature in self.features.items():
-                if Undefined in feature.software:
+                if Undefined in feature.softwarefeature:
                     # drop undefined-on-one-side
                     del self.features[label]
+        # print(163)
+        # print([feature.files for feature in self.features.values()])
 
     @property
     def root(self):
@@ -177,7 +202,7 @@ class Matchup:  # pylint: disable=too-many-instance-attributes
             f'_{suffix}.{extension}'
         """
 
-
+    # pylint: disable=too-many-arguments
     def set_method_for_entities(self, software, entities, endswith, method,
                                 filetype=Undefined):
         """Set correlation method for files with given entities and suffix.
@@ -232,6 +257,7 @@ class Matchup:  # pylint: disable=too-many-instance-attributes
                                   [file for output in self.files for file in
                                    output] if file.endswith(endswith)})
         for feature in matching_features:
+            print(f'matching feature: {feature}, method: {method}')
             self.features[feature] = Feature(feature,
                                              correlation_method=method,
                                              filetype=filetype)
