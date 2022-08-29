@@ -16,94 +16,9 @@ License along with CPAC_regtest_pack. If not, see
 '''
 from traits.api import Undefined
 from .directory import determine_software_and_root, entities_from_featurekey, \
-                       feature_label_from_filename, filepath_match_entity
-from .features import Feature, SOFTWARE
+                       feature_label_from_filename, separate_working_files
+from .features import Feature
 from .subjects import gather_unique_ids
-
-
-class Features(dict):
-    """Subclass of dict to hold features but add a method for iterating
-
-    keys are strings
-
-    values are lists of Feature
-    """
-    def iterate_features(self, file, specific_id, software, position):
-        """Loop through features for a given filename, ID, feature,
-        software, and position, adding matches to appropriate Feature within
-
-        Parameters
-        ----------
-        features : list of str
-            features to try to find
-
-        file : str
-
-        specific_id : UniqueId
-
-        software : Software
-
-        postion : int
-            0 or 1
-
-        Returns
-        -------
-        dict
-        """
-        if filepath_match_entity(file, specific_id):
-            for label, feature in self.items():
-                if self.filepath_match_output(file, label, software):
-                    print(56)
-                    print(f'{label}?')
-                    print(file)
-                    feature.add_file(position, file)
-        return self
-
-    def filepath_match_output(self, filepath, feature, software):
-        """Check if a filepath matches configuration for a given feature
-        and software
-
-        Parameters
-        ----------
-        filepath : str
-
-        feature : str
-
-        software : Software
-
-        Returns
-        -------
-        bool
-        """
-        # --------------------------------------------------------------
-        # This section will need refactoring if we need version-specific
-        # matching
-        if software.name not in SOFTWARE:
-            # print(82)
-            # print(software.name)
-            # print(SOFTWARE)
-            return False
-        software = SOFTWARE[software.name]
-        # ---------------------------------------------------------------
-        if feature not in self:
-            # print(87)
-            # print(feature)
-            # print(self)
-            return False
-        software_features = self[feature].softwarefeature[software]
-        if hasattr(software_features, 'endswith'):
-            if not filepath.endswith(software_features.endswith):
-                # print(93)
-                # print(feature)
-                # print(software_features.endswith)
-                return False
-        if hasattr(software_features, 'entities'):
-            if not filepath_match_entity(filepath, software_features.entities):
-                # print(99)
-                # print(feature)
-                # print(software_features.entities)
-                return False
-        return True
 
 
 class Matchup:  # pylint: disable=too-many-instance-attributes
@@ -111,25 +26,20 @@ class Matchup:  # pylint: disable=too-many-instance-attributes
 
     Attributes
     ----------
-    features : Features
-        dict of {str: Feature}
+    features : dict of {UniqueId: dict}
+        subset of unique_ids with the greatest number of entities
 
-    files : 2-tuple of list of str
+    files : 2-length list of lists of str
         for each output, all found files
 
-    ids : 2-tuple of list of UniqueIds
-        for each output, list of strings of BIDS entities describing
-        one or more outputs
-
     most_specific_ids : list of UniqueId
-        subset of unique_ids with the greatest number of entities
 
     root : 2-tuple of str
         root paths to each output
 
-    software : tuple of cpac_heatmaps.features.Software
+    software : tuple of Software
 
-    unique_ids : list of str
+    unique_ids : list of UniqueId
         intersection of ids for both outputs
     """
     def __init__(self, paths):
@@ -140,7 +50,7 @@ class Matchup:  # pylint: disable=too-many-instance-attributes
             paths to output directories to compare
         """
         self._bids_layout = [Undefined, Undefined]
-        self.files = [Undefined, Undefined]
+        self.files = self.Filelist((Undefined, Undefined))
         self._ids = [Undefined, Undefined]
         self._root = [Undefined, Undefined]
         self._software = [Undefined, Undefined]
@@ -150,45 +60,125 @@ class Matchup:  # pylint: disable=too-many-instance-attributes
             self._ids[i], self._bids_layout[i] = gather_unique_ids(
                 self.root[i])
             self.files[i] = list(self._bids_layout[i].get_files().keys())
+            if hasattr(self.software[i],
+                       'name') and self.software[i].name == 'C-PAC':
+                self.files[i] = separate_working_files(self.files[i])
         # pylint: disable=no-member
         self.unique_ids = self._ids[0].intersection(self._ids[1])
-        self.most_specific_ids = [id for id in self.unique_ids if
-                                  len(id) == max(len(id) for id in
-                                                 self.unique_ids)]
-        self.features = Features()
+        self.features = {id: {} for id in self.unique_ids if
+                         len(id) == max(len(id) for id in self.unique_ids)}
+
+    def __repr__(self):
+        return f'{self.software[0]} vs. {self.software[1]}'
+
+    class Filelist(list):
+        """Subclass of list with extra 'flat' attribute
+
+        Attributes
+        ----------
+        flat : list
+        """
+        @property
+        def flat(self):
+            """Flat list of output files"""
+            if not isinstance(self, list) or len(self) != 2:
+                raise TypeError('Something is unexpected about Filelist \n'
+                                f'{self}')
+            files = [[], []]
+            for i in range(2):
+                if isinstance(self[i], tuple):
+                    for j in range(3):
+                        if not files[i]:
+                            files[i] = self[j]
+                else:
+                    files[i] = self[i]
+            return files[0] + files[1]
 
     @property
     def ids(self):
         """2-tuple of lists of UniqueIds"""
         return tuple(self._ids)
 
-    def iterate_features(self):
-        """
-        Once feature keys are defined, run this method to iterate files
-        looking for defined features.
-        """
-        for specific_id in self.most_specific_ids:
-            for i in range(2):
-                for file in self.files[i]:
-                    self.features.iterate_features(
-                        file, specific_id, self.software[i], i)
-            for label, feature in self.features.items():
-                if Undefined in feature.softwarefeature:
-                    # drop undefined-on-one-side
-                    del self.features[label]
-        # print(163)
-        # print([feature.files for feature in self.features.values()])
+    def iterate_files(self):
+        """Iterate through features and find matching files.
+
+        This method updates the 'files' attribute of each feature"""
+        # pylint: disable=too-many-branches,too-many-nested-blocks
+        for feature_dict in self.features.values():
+            for feature in feature_dict.values():
+                for i in range(2):
+                    if (isinstance(self.files[i], tuple) and
+                            len(self.files[i]) == 3):
+                        for file in self.files[i][0]:
+                            if feature.filepath_match_output(file,
+                                                             self.software[i]):
+                                feature.add_file(i, file)
+                    else:
+                        for file in self.files[i]:
+                            if feature.filepath_match_output(file,
+                                                             self.software[i]):
+                                feature.add_file(i, file)
+
+    @property
+    def most_specific_ids(self):
+        """List of UniqueIds"""
+        return list(self.features.keys())
 
     @property
     def root(self):
         """2-tuple of root output directories"""
         return tuple(self._root)
 
-    def set_entities_for_software(self, software, feature_key, entities,
-                                  endswith):
+    # pylint: disable=too-many-arguments
+    def set_method(self, software, method, feature_keys=Undefined,
+                   entities=None, endswith=None, filetype=Undefined):
         """
-        Set entities and endswith for one software for a feature that
-        is already defined for another software.
+        For given software, set correlation method, optionally also
+        setting feature_keys, entities, endswith, and/or filetype
+
+        Parameters
+        ----------
+        software : str
+
+        method : str
+
+        feature_keys : list of str, or str, optional
+
+        entities : dict, optional
+
+        endswith : str, optional
+
+        filetype : str, optional
+        """
+        if entities is None:
+            entities = entities_from_featurekey(feature_keys) if (
+                endswith is None and filetype is Undefined) else {}
+        if endswith is None:
+            endswith = ''
+        if feature_keys is Undefined:
+            matching_features = list({feature_label_from_filename(file) for
+                                      file in [file for output in
+                                      self.files.flat for file in output] if
+                                      file.endswith(endswith) and
+                                      all('-'.join(entity) in file for
+                                      entity in entities.items())})
+        else:
+            matching_features = feature_keys if (
+                isinstance(feature_keys, list)) else [feature_keys]
+        for feature in matching_features:
+            print(f'setting method {method} for {feature}')
+            self.set_filename_matching(software, feature, entities,
+                                       endswith, filetype)
+            for feature_dict in self.features.values():
+                feature_dict[feature].set_correlation_method(method)
+        return matching_features
+
+    def set_filename_matching(self, software, feature_key, entities=None,
+                              endswith=None, filetype=Undefined):
+        """
+        For given software, set feature_key, optionally also setting
+        entities, endswith, and/or filetype. If only feature_key is
+        provided, entities is inferred from feature_key
 
         Parameters
         ----------
@@ -196,75 +186,24 @@ class Matchup:  # pylint: disable=too-many-instance-attributes
 
         feature_key : str
 
-        entities : dict
+        entities : dict, optional
 
-        endswith : str
-            f'_{suffix}.{extension}'
-        """
-
-    # pylint: disable=too-many-arguments
-    def set_method_for_entities(self, software, entities, endswith, method,
-                                filetype=Undefined):
-        """Set correlation method for files with given entities and suffix.
-        If a method was already set for matching features, this method
-        will override.
-
-        Parameters
-        ----------
-        software : str
-
-        entities : dict
-
-        endswith : str
-            f'_{suffix}.{extension}'
-
-        method : str
+        endswith : str, optional
 
         filetype : str, optional
         """
-        matching_features = list({feature_label_from_filename(file) for file in
-                                  [file for output in self.files for file in
-                                   output] if file.endswith(endswith) and
-                                  all('-'.join(entity) in file for entity in
-                                      entities.items())})
-        for feature in matching_features:
-            self.features[feature] = Feature(feature,
-                                             correlation_method=method,
-                                             filetype=filetype)
-            self.features[feature].set_software_entities(
-                SOFTWARE[software], entities_from_featurekey(feature))
-            self.features[feature].set_software_endswith(SOFTWARE[software],
-                                                         endswith)
-
-    def set_method_for_suffix(self, software, endswith, method,
-                              filetype=Undefined):
-        """Set correlation method for files with given suffix.
-        If a method was already set for matching features, this method
-        will override.
-
-        Parameters
-        ----------
-        software : str
-
-        endswith : str
-            f'_{suffix}.{extension}'
-
-        method : str
-
-        filetype : str, optional
-        """
-        matching_features = list({feature_label_from_filename(file) for file in
-                                  [file for output in self.files for file in
-                                   output] if file.endswith(endswith)})
-        for feature in matching_features:
-            print(f'matching feature: {feature}, method: {method}')
-            self.features[feature] = Feature(feature,
-                                             correlation_method=method,
-                                             filetype=filetype)
-            self.features[feature].set_software_entities(
-                SOFTWARE[software], entities_from_featurekey(feature))
-            self.features[feature].set_software_endswith(SOFTWARE[software],
-                                                         endswith)
+        if entities is None and endswith is None:
+            entities = feature_label_from_filename(feature_key)
+        for feature_dict in self.features.values():
+            if feature_key not in feature_dict:
+                feature_dict[feature_key] = Feature(feature_key,
+                                                    filetype=filetype)
+            if entities is not None:
+                feature_dict[feature_key].set_software_entities(software,
+                                                                entities)
+            if endswith is not None:
+                feature_dict[feature_key].set_software_endswith(software,
+                                                                endswith)
 
     @property
     def software(self):

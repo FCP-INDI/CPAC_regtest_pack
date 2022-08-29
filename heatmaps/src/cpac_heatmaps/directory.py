@@ -15,13 +15,11 @@ License along with CPAC_regtest_pack. If not, see
 <https://www.gnu.org/licenses/>.
 '''
 import os
-import re
 from logging import warning
 from typing import List, Tuple
 import yaml
 from traits.api import Undefined
-from .features import Software, splitext
-from .subjects import ATTRIBUTES, UniqueId
+from .features import Software, splitext, strip_int_suffix
 
 
 def determine_software_and_root(outputs_path):
@@ -40,6 +38,7 @@ def determine_software_and_root(outputs_path):
 
     outputs_root : str
     '''
+    # pylint: disable=too-many-branches,too-many-locals
     # pylint: disable=too-many-nested-blocks,too-many-return-statements
     software = outputs_root = None
     outputs_path = outputs_path.rstrip('/')  # drop trailing slash if present
@@ -140,99 +139,17 @@ def entities_from_featurekey(featurekey):
 
     Parameters
     ----------
-    featurekey : str
+    featurekey : str or list of str
 
     Returns
     -------
     entities_to_match : dict
     """
+    if isinstance(featurekey, list):
+        return intersection([dict([_e.split('-')]) for _e in
+                             featurekey.split('_') if '-' in _e])
     parts = featurekey.split('_')[:-1]
     return dict([part.split('-', 1) for part in parts])
-
-
-def filepath_match_entity(filepath, key, value=None):
-    '''Does this filepath match the given entity?
-
-    Parameters
-    ----------
-    filepath : str
-
-    key : str, UniqueId, dict, or iterable
-
-    value : str, optional
-        if numeric, tries to match integer value
-        can include wildcards '*' or '?'
-        can be negated by prefixing with '!'
-
-    Returns
-    -------
-    bool
-    '''
-    # pylint: disable=too-many-return-statements
-    if filepath is Undefined:
-        return False
-    basename = os.path.basename(filepath)
-    if isinstance(key, UniqueId):
-        return all(
-            filepath_match_entity(filepath, ATTRIBUTES[attribute],
-                                  getattr(key, attribute)) for
-            attribute in key.get_own_attributes())
-    if isinstance(key, (list, tuple, set)):
-        if isinstance(key, set):
-            key = list(key)
-        return all(filepath_match_entity(filepath, attribute) for
-                   attribute in key)
-    if isinstance(key, dict):
-        return all(
-            filepath_match_entity(filepath, d_key, d_value) for
-            d_key, d_value in key.items())
-    if isinstance(key, str):
-        f_key = f'{key}-'
-        if f_key not in basename:
-            return False
-        check_value = basename.split(f_key, 1)[-1].split('_')[0]
-        check_value = _strip_int_suffix(check_value)
-        value = _strip_int_suffix(value)
-        if isinstance(value, (str, int, float)):
-            if isinstance(value, str):
-                if value.startswith('!'):
-                    # return bool(not-match)
-                    return not filepath_match_entity(filepath, key, value[1:])
-                # convert wildcards to regex
-                value = value.replace('*', '.*').replace('?', '.?')
-            if str(value).isnumeric():
-                try:
-                    return int(check_value) == int(value)
-                except ValueError:
-                    return check_value == value
-            return bool(re.match(str(value), str(check_value)))
-    return False
-
-
-def _strip_int_suffix(label):
-    """Drop integer suffixes from C-PAC fork descriptions
-
-    Examples
-    --------
-    >>> _strip_int_suffix('desc-mean-1_bold.nii.gz')
-    'desc-mean_bold.nii.gz'
-    >>> _strip_int_suffix({'desc': 'mean-1'})
-    {'desc': 'mean'}
-    """
-    if isinstance(label, dict):
-        return {key: (value.rstrip('-0123456789') if
-                      key == 'desc' and isinstance(value, str) and
-                      '-' in value else value) for key, value in label.items()}
-    if isinstance(label, str):
-        parts = label.split('_')
-        index = [i for i, part in enumerate(parts) if part.startswith('desc-')]
-        if index:
-            index = index[0]
-            parts[index] = '-'.join(
-                list(_strip_int_suffix(dict(
-                    [parts[index].split('-', 1)])).items())[0])
-        return '_'.join(parts)
-    return label
 
 
 def feature_label_from_filename(filename):
@@ -247,7 +164,7 @@ def feature_label_from_filename(filename):
     str
     """
     filename, _ = splitext(os.path.basename(filename))
-    parts = _strip_int_suffix(filename).split('_')
+    parts = strip_int_suffix(filename).split('_')
     return '_'.join([part for part in parts if any(part.startswith(key) for
                      key in ['atlas', 'desc', 'space'])] + parts[-1:])
 
@@ -317,3 +234,37 @@ def separate_working_files(file_list: List[str], outputs: str = '/output/',
         else:
             others.append(file)
     return output_list, working_list, others
+
+
+def intersection(list_of_dicts):
+    """Given a list of dicts, return their intersection.
+    Repeated keys with differing values will be dropped.
+
+    Parameters
+    ----------
+    list_of_dicts : list of dict
+
+    Returns
+    -------
+    dict
+
+    Examples
+    --------
+    >>> intersection([{'space': 'template', 'res': 2, 'desc': 'preproc'},
+    ...               {'space': 'native', 'res': 2, 'desc': 'preproc'}])
+    {'res': 2, 'desc': 'preproc'}
+    >>> intersection([{'space': 'template', 'res': 2, 'desc': 'preproc'},
+    ...               {'res': 1, 'desc': 'preproc'}])
+    {'desc': 'preproc'}
+    """
+    if len(list_of_dicts) < 2:
+        return _handle_fewer_than_2(list_of_dicts)
+    if len(list_of_dicts) == 2:
+        return dict(list_of_dicts[0].items() & list_of_dicts[1].items())
+    return intersection([intersection(list_of_dicts[:2]), *list_of_dicts[2:]])
+
+
+def _handle_fewer_than_2(list_of_dicts):
+    if len(list_of_dicts) == 1:
+        return list_of_dicts[0]
+    return {}

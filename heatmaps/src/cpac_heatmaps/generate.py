@@ -45,54 +45,65 @@ def main():
                         help="name for the correlations run")
     args = parser.parse_args()
     matchup = Matchup(args.outputs_path)
-    matchup.set_method_for_suffix("C-PAC", "_bold.nii.gz",
-                                  "Pearson_3dTcorrelate")
-    matchup.set_entities_for_software("XCPD", "space-template_"
-                                      "desc-preproc_bold.nii.gz",
-                                      {"space": "*"}, "_bold.nii.gz")
-    matchup.set_method_for_entities("C-PAC", {"desc": "mean"}, "_bold.nii.gz",
-                                    "Pearson")
-    matchup.set_method_for_suffix("C-PAC", "_correlations.tsv", "Spearman",
-                                  "matrix")
-    matchup.iterate_features()
+    print(matchup)
+    for software in matchup.software:
+        if software.name == "C-PAC":
+            matchup.set_method(software, "Pearson_3dTcorrelate",
+                               entities={"desc": "!mean"},
+                               endswith="_bold.nii.gz")
+            matchup.set_method(software, "Pearson", entities={"desc": "mean"},
+                               endswith="_bold.nii.gz")
+            matchup.set_method(software, "Spearman",
+                               endswith="_correlations.tsv", filetype="matrix")
+        if software.name == "fMRIPrep":
+            # specifically match C-PAC labels
+            matchup.set_filename_matching(software,
+                                          "space-template_desc-preproc_bold",
+                                          entities={"space": "*"},
+                                          endswith="_bold.nii.gz")
 
-    corr_data = []
-    var_list = []
-    for label, feature in matchup.features.items():
-        if feature is not Undefined:
-            for filepair in feature.files:
-                if str(label).endswith('_correlations'):
-                    corr = feature.correlation_method.run(
-                        CalculateCorrelationBetween(*filepair,
-                                                    filetype='matrix'))
-                else:
-                    corr = feature.correlation_method.run(
-                        CalculateCorrelationBetween(*filepair))
-                corr_coeff = corr if isinstance(corr, float) else corr[0]
-                if corr_coeff is not np.nan:
-                    if feature.correlation_method.basenames[
-                        0
-                    ] == feature.correlation_method.basenames[1]:
-                        var_list.append(label)
+    matchup.iterate_files()
+    # pylint: disable=too-many-nested-blocks
+    for run, features in matchup.features.items():
+        corr_data = []
+        var_list = []
+        for label, feature in features.items():
+            if feature is not Undefined:
+                for filepair in feature.files:
+                    if str(label).endswith('_correlations'):
+                        corr = feature.correlation_method.run(
+                            CalculateCorrelationBetween(*filepair,
+                                                        filetype='matrix'))
                     else:
-                        var_list.append('\n'.join(
-                            feature.correation_method.basenames))
-                    corr_data.append(corr_coeff)
+                        corr = feature.correlation_method.run(
+                            CalculateCorrelationBetween(*filepair))
+                    corr_coeff = corr if isinstance(corr, float) else corr[0]
+                    if corr_coeff is not np.nan:
+                        if feature.basenames[
+                            0
+                        ] == feature.basenames[1]:
+                            var_list.append(label)
+                        else:
+                            var_list.append('\n'.join(feature.basenames))
+                        corr_data.append(corr_coeff)
         output_dir = os.path.join(
-            os.getcwd(), f"correlations_{args.run_name}"
-        )
+            os.getcwd(), f"correlations_{args.run_name}")
         os.makedirs(output_dir, exist_ok=True)
-    if corr_data and var_list and matchup.most_specific_ids:
-        for imagetype in ["png", "svg"]:
-            # pylint: disable=consider-using-f-string
-            print(corr_data)
-            print(var_list)
-            print(matchup.most_specific_ids)
-            generate_heatmap(np.array(corr_data).T, list(var_list),
-                             matchup.most_specific_ids,
-                             save_path=os.path.join(output_dir,
-                                                    f"heatmap.{imagetype}"),
-                             title='{} vs. {}'.format(*matchup.software))
+        print(88)
+        print(len(matchup.features))
+        if corr_data and var_list and matchup.most_specific_ids:
+            for imagetype in ["png", "svg"]:
+                # pylint: disable=consider-using-f-string
+                print(89)
+                print(len(corr_data))
+                print(len(var_list))
+                print(len(matchup.most_specific_ids))
+                generate_heatmap(np.array(corr_data).T, list(var_list),
+                                 matchup.most_specific_ids,
+                                 save_path=os.path.join(output_dir,
+                                                        f"heatmap_{run}."
+                                                        f"{imagetype}"),
+                                 title='{} vs. {}'.format(*matchup.software))
 
 
 if __name__ == "__main__":

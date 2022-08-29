@@ -34,6 +34,7 @@ def gather_unique_ids(path: str) -> Tuple[Set['UniqueId'], 'BIDSLayout']:
     set of UniqueId
 
     BIDSLayout'''
+    print(f'Parsing paths in {path} (this may take a few moments)…')
     layout = BIDSLayout(path, validate=False)
     layout_df = layout.to_df()
     unique_ids = set()
@@ -44,6 +45,7 @@ def gather_unique_ids(path: str) -> Tuple[Set['UniqueId'], 'BIDSLayout']:
             unique_ids.add(UniqueId(**row[1].to_dict()))
         except TypeError:
             pass
+    print(f'{path} sucessfully loaded.')
     return unique_ids, layout
 
 

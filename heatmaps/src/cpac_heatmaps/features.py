@@ -16,24 +16,60 @@ License along with CPAC_regtest_pack. If not, see
 '''
 import inspect
 import os
-from itertools import chain, permutations
+import re
 from logging import warning
 from shutil import rmtree
 from tempfile import TemporaryDirectory
 from typing import Any, Dict, Optional, Tuple, Union
 import nibabel as nib
 import numpy as np
-from nipype.interfaces.afni import Resample, TCorrelate
+from nipype.interfaces.afni import Resample as NipypeResample, TCorrelate
+from nipype.interfaces.afni.base import AFNICommand
+from nipype.interfaces.afni.utils import ResampleInputSpec
+from nipype.interfaces.base import File, TraitedSpec
 from nipype.pipeline import engine as pe
 from scipy.stats import pearsonr, spearmanr
 from scipy.spatial.distance import dice
 from traits.api import Undefined
+from .subjects import ATTRIBUTES, UniqueId
 
 UndefinedType = type(Undefined)
 
 
+class AFNICommandOutputSpec(TraitedSpec):
+    """
+    Copyright (c) 2009-2016, Nipype developers
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+        http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+    Prior to release 0.12, Nipype was licensed under a BSD license.
+
+    Modified to allow output file to not exist
+    """
+    out_file = File(desc="output file", exists=False)
+
+
 class CalculateCorrelation:
-    """Class to check/adjust data shapes and calculate correlations"""
+    """Class to check/adjust data shapes and calculate correlations
+
+    Attributes
+    ----------
+    basenames : 2-tuple of str
+
+    paths : 2-tuple of str
+
+    working_directory : str
+    """
     def __init__(self, *args, **kwargs):
         """Not intended to be initialized directly. Use
         ``CalculateCorrelationBetween`` or another specific subclass to
@@ -226,34 +262,26 @@ class CorrelationMethod:
     ----------
     calculate_correlation : CalculateCorrelation
 
-    correlation_method : CorrelationMethod
-
-    software : 2-tuple of (Software, Software)
+    correlation_method : str
     """
-    def __init__(self, software_a: Optional['Software'] = None,
-                 software_b: Optional['Software'] = None) -> None:
-        """
-        Parameters
-        ----------
-        software_a, software_b : Software
-        """
+    def __init__(self) -> None:
         self.calculate_correlation = Undefined
         self.correlation_method = Undefined
         self._run = Undefined
-        self.software = (software_a, software_b) if (
-            isinstance(software_a, Software) and (software_b, Software)
-        ) else (Undefined, Undefined)
 
     def __repr__(self):
-        return (f'{self.correlation_method}: {self.software[0]}, '
-                f'{self.software[1]}')
+        return self.correlation_method
 
     def __setattr__(self, __name: str, __value: Any) -> None:
         self.__dict__[__name] = __value
         if __name == 'correlation_method' and __value is not Undefined:
             correlation_method = __value.lower()
             if hasattr(self, correlation_method):
-                self._run = self.correlation_method
+                self._run = getattr(self, correlation_method)
+
+    def cleanup(self):
+        """Convenience method to clean up"""
+        self.calculate_correlation.cleanup()
 
     def dice(self) -> float:
         """Dice coefficient
@@ -262,9 +290,13 @@ class CorrelationMethod:
         -------
         dice_coefficient : float
         """
-        files = [image.get_fdata().ravel() for image in
+        files = [image.get_fdata(caching="unchanged").ravel() for image in
                  self.calculate_correlation.images]
-        return dice(*files)
+        for image in self.calculate_correlation.images:
+            image.uncache()
+        value = dice(*files)
+        del files
+        return value
 
     def identity(self) -> float:
         """Return 1.
@@ -286,10 +318,13 @@ class CorrelationMethod:
         """
         self.correlation_method = 'Pearson'
         # pylint: disable=no-member
-        return CorrelationCoefficient(
-            pearsonr(*[image.get_fdata().ravel() for image in
-                       self.calculate_correlation.images]).statistic,
-            'Pearson')
+        pearson = pearsonr(*[image.get_fdata(caching="unchanged").ravel() for
+                             image in self.calculate_correlation.images])
+        value = CorrelationCoefficient(pearson[0] if
+                                       isinstance(pearson, tuple) else
+                                       pearson.statistic, 'Pearson')
+        del pearson
+        return value
 
     def pearson_3dcorrelate(self) -> Tuple[float, float, float]:
         """Pearson correlation via 3dcorrelate
@@ -310,9 +345,12 @@ class CorrelationMethod:
         tcorrelate.inputs.pearson = True
         correlation_image = nib.load(tcorrelate.run().outputs.out_file)
         non_zeroes = [point for point in
-                      correlation_image.get_fdata().ravel() if point != 0]
-        return CorrelationCoefficient(np.mean(non_zeroes), 'mean(Pearson)',
-                                      non_zeroes)
+                      correlation_image.get_fdata(caching="unchanged").ravel()
+                      if point != 0]
+        value = CorrelationCoefficient(np.mean(non_zeroes), 'mean(Pearson)',
+                                       non_zeroes)
+        del correlation_image, non_zeroes, tcorrelate
+        return value
 
     def pearson_3dtcorrelate(self) -> Tuple[float, float, float]:
         """Pearson correlation via 3dTcorrelate
@@ -333,9 +371,12 @@ class CorrelationMethod:
         tcorrelate.inputs.pearson = True
         correlation_image = nib.load(tcorrelate.run().outputs.out_file)
         non_zeroes = [point for point in
-                      correlation_image.get_fdata().ravel() if point != 0]
-        return CorrelationCoefficient(np.mean(non_zeroes), 'mean(Pearson)',
-                                      non_zeroes)
+                      correlation_image.get_fdata(caching="unchanged").ravel()
+                      if point != 0]
+        value = CorrelationCoefficient(np.mean(non_zeroes), 'mean(Pearson)',
+                                       non_zeroes)
+        del correlation_image, non_zeroes, tcorrelate
+        return value
 
     def run(self, calculate_correlation):
         """Calculate correlation coefficient
@@ -356,7 +397,7 @@ class CorrelationMethod:
         except Exception as exception:
             warning(str(exception))
         finally:
-            # self.calculate_correlation.cleanup()
+            self.cleanup()
             return coefficient
 
     def spearman(self):
@@ -366,14 +407,19 @@ class CorrelationMethod:
         -------
         spearman_r : CorrelationCoefficient
         """
-        files = [load_matrix_array(file).ravel() for file in
-                 self.calculate_correlation.paths]
-        print(files)
-        print(spearmanr(*files))
         return CorrelationCoefficient(
-            spearmanr(*(load_matrix_array(file).ravel() for file in
-                      self.calculate_correlation.paths)).correlation,
+            spearmanr(*(matrix.ravel() for matrix in
+                        self.calculate_correlation.matrices)).correlation,
             'Spearman')
+
+
+def _forgiving_load(path, fxn, *args, **kwargs):
+    """Try to load a file; return None if fail"""
+    try:
+        return fxn(path, *args, **kwargs)
+    except OSError as os_error:
+        warning(os_error)
+        return None
 
 
 class _LoadedPaths:  # pylint: disable=too-few-public-methods
@@ -396,12 +442,16 @@ class _LoadedPaths:  # pylint: disable=too-few-public-methods
 class _Images(_LoadedPaths):
     def __init__(self, nifti1, nifti2):
         super().__init__(nifti1, nifti2)
-        self.images = [nib.load(nifti) for nifti in [nifti1, nifti2]]
+        self.images = [img for img in [
+            _forgiving_load(nifti, nib.load) for nifti in [nifti1, nifti2]
+        ] if img is not None]
 
     def __setitem__(self, key, value):
         if isinstance(value, str):
-            self.images[key] = nib.load(value)
-            self.paths[key] = value
+            img = _forgiving_load(value, nib.load)
+            if img is not None:
+                self.images[key] = nib.load(value)
+                self.paths[key] = value
         elif isinstance(value, nib.nifti1.Nifti1Image):
             self.images[key] = value
             basename, ext = splitext(self.basenames[key])
@@ -413,12 +463,16 @@ class _Images(_LoadedPaths):
 class _Matrices(_LoadedPaths):
     def __init__(self, path1, path2):
         super().__init__(path1, path2)
-        self.matrices = [load_matrix_array(path) for path in [path1, path2]]
+        self.matrices = [matrix for matrix in [
+            _forgiving_load(path, load_matrix_array) for path in [
+                path1, path2]] if matrix is not None]
 
     def __setitem__(self, key, value):
         if isinstance(value, str):
-            self.matrices[key] = load_matrix_array(value)
-            self.paths[key] = value
+            matrix = _forgiving_load(value, load_matrix_array)
+            if matrix is not None:
+                self.matrices[key] = matrix
+                self.paths[key] = value
         elif isinstance(value, np.ndarray):
             self.matrices[key] = value
             basename, ext = splitext(self.basenames[key])
@@ -463,6 +517,15 @@ class Software:
         self.name = name
         self.version = f"v{version.lstrip('v')}" if isinstance(
             version, str) else version
+
+    def __eq__(self, other):
+        try:
+            return self.name == other.name and self.version == other.version
+        except AttributeError:
+            return str(self) == str(other)
+
+    def __hash__(self):
+        return hash((self.name, self.version))
 
     def __repr__(self) -> None:
         if isinstance(self.version, str):
@@ -514,6 +577,8 @@ class Feature:
 
     Attributes
     ----------
+    basenames : 2-tuple of str
+
     correlation_method : CorrelationMethod
 
     files : list of 2-tuples of strings
@@ -525,7 +590,7 @@ class Feature:
 
     name : str
 
-    files : 2-tuple of lists of strings
+    softwarefeature : dict of {Software: SoftwareFeature}
     """
     def __init__(self, name: str, **kwargs) -> None:
         """
@@ -536,7 +601,7 @@ class Feature:
         correlation_method, filetype, link : str, optional
         """
         self.correlation_method = Undefined
-        self._files = ([], [])  # each list is all matching files for one
+        self._files = ([], [])  # each list is all matching files for one run
         self.filetype = kwargs.get('filetype', Undefined)
         self.link = kwargs.get('link', Undefined)
         self.name = name
@@ -546,10 +611,6 @@ class Feature:
 
     def __repr__(self) -> None:
         return self.name
-
-    def _check_self_software(self, software: 'Software') -> None:
-        if software not in self.softwarefeature:
-            self.softwarefeature[software] = SoftwareFeature(self.name)
 
     def add_file(self, position, file):
         """Add a file to list of matching files
@@ -562,16 +623,53 @@ class Feature:
         file : str
            filepath
         """
-        if position == 0:
+        if position == 0 and file not in self._files[0]:
             self._files = (self._files[0] + [file], self._files[1])
-        elif position == 1:
-            self._files = (self._files[0], self._files[1])
+        elif position == 1 and file not in self._files[1]:
+            self._files = (self._files[0], self._files[1] + [file])
+
+    @property
+    def basenames(self):
+        """Memoized basenames"""
+        try:
+            return self.correlation_method.calculate_correlation.basenames
+        except AttributeError:
+            return (Undefined, Undefined)
+
+    def _check_software(self, software: 'Software') -> None:
+        if software not in self.softwarefeature:
+            self.softwarefeature[software] = SoftwareFeature(self.name)
+
+    def filepath_match_output(self, filepath, software):
+        """Check if a filepath matches configuration for a given feature
+        and software
+
+        Parameters
+        ----------
+        filepath : str
+
+        software : Software
+
+        Returns
+        -------
+        bool
+        """
+        try:
+            software_features = self.softwarefeature[software]
+        except KeyError:
+            return False
+        if hasattr(software_features, 'endswith'):
+            if not filepath.endswith(software_features.endswith):
+                return False
+        if hasattr(software_features, 'entities'):
+            if not filepath_match_entity(filepath, software_features.entities):
+                return False
+        return True
 
     @property
     def files(self):
         """list of 2-tuples of strings (pairs of files to compare)"""
-        return list(chain.from_iterable(zip(permutation, self._files[1]) for
-                    permutation in permutations(self._files[0])))
+        return [(_0, _1) for _0 in self._files[0] for _1 in self._files[1]]
 
     def set_correlation_method(self, correlation_method: str) -> None:
         """Set feature's correlation method in-place
@@ -594,7 +692,7 @@ class Feature:
 
         endswith : str
         """
-        self._check_self_software(software)
+        self._check_software(software)
         self.softwarefeature[software].endswith = endswith
 
     def set_software_entities(self, software: 'Software',
@@ -609,7 +707,7 @@ class Feature:
             key, value pairs of BIDS keys and regular expressions to
             match BIDS values
             """
-        self._check_self_software(software)
+        self._check_software(software)
         self.softwarefeature[software].entities = entities
 
     def set_software_regex(self, software: 'Software', regex: str) -> None:
@@ -621,8 +719,99 @@ class Feature:
 
         regex : str
         """
-        self._check_self_software(software)
+        self._check_software(software)
         self.softwarefeature[software].regex = regex
+
+
+class Resample(AFNICommand):
+    # pylint: disable=abstract-method
+    _cmd = "3dresample"
+    input_spec = ResampleInputSpec
+    output_spec = AFNICommandOutputSpec
+
+
+Resample.__doc__ = """
+    Copyright (c) 2009-2016, Nipype developers
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+        http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+    Prior to release 0.12, Nipype was licensed under a BSD license.
+
+    modified from https://github.com/nipy/nipype/blob/4a91e887/nipype/interfaces/afni/utils.py#L2632-L2653
+    to not require the output file to exist.
+
+    """ + NipypeResample.__doc__
+
+
+def filepath_match_entity(filepath, key, value=None):
+    '''Does this filepath match the given entity?
+
+    Parameters
+    ----------
+    filepath : str
+
+    key : str, UniqueId, dict, or iterable
+
+    value : str, optional
+        if numeric, tries to match integer value
+        can include wildcards '*' or '?'
+        can be negated by prefixing with '!'
+
+    Returns
+    -------
+    bool
+    '''
+    # pylint: disable=too-many-branches,too-many-return-statements
+    if filepath is Undefined:
+        return False
+    basename = os.path.basename(filepath)
+    if isinstance(key, UniqueId):
+        return all(
+            filepath_match_entity(filepath, ATTRIBUTES[attribute],
+                                  getattr(key, attribute)) for
+            attribute in key.get_own_attributes())
+    if isinstance(key, (list, tuple, set)):
+        if isinstance(key, set):
+            key = list(key)
+        return all(filepath_match_entity(filepath, attribute) for
+                   attribute in key)
+    if isinstance(key, dict):
+        return all(
+            filepath_match_entity(filepath, d_key, d_value) for
+            d_key, d_value in key.items())
+    if isinstance(key, str):
+        f_key = f'{key}-'
+        if f_key not in basename:
+            if value.startswith('!'):
+                return True
+            return False
+        check_value = basename.split(f_key, 1)[-1].split('_')[0]
+        check_value = strip_int_suffix(check_value)
+        value = strip_int_suffix(value)
+        if isinstance(value, (str, int, float)):
+            if isinstance(value, str):
+                if value.startswith('!'):
+                    # return bool(not-match)
+                    return not filepath_match_entity(filepath, key, value[1:])
+                # convert wildcards to regex
+                value = value.replace('*', '.*').replace('?', '.?')
+            if str(value).isnumeric():
+                try:
+                    return int(check_value) == int(value)
+                except ValueError:
+                    return check_value == value
+            return bool(re.match(str(value), str(check_value)))
+    return True
 
 
 def load_matrix_array(filepath):
@@ -724,6 +913,32 @@ def splitext(filename):
     return ''.join([ignore_area, extension_area]), ext
 
 
+def strip_int_suffix(label):
+    """Drop integer suffixes from C-PAC fork descriptions
+
+    Examples
+    --------
+    >>> strip_int_suffix('desc-mean-1_bold.nii.gz')
+    'desc-mean_bold.nii.gz'
+    >>> strip_int_suffix({'desc': 'mean-1'})
+    {'desc': 'mean'}
+    """
+    if isinstance(label, dict):
+        return {key: (value.rstrip('-0123456789') if
+                      key == 'desc' and isinstance(value, str) and
+                      '-' in value else value) for key, value in label.items()}
+    if isinstance(label, str):
+        parts = label.split('_')
+        index = [i for i, part in enumerate(parts) if part.startswith('desc-')]
+        if index:
+            index = index[0]
+            parts[index] = '-'.join(
+                list(strip_int_suffix(dict(
+                    [parts[index].split('-', 1)])).items())[0])
+        return '_'.join(parts)
+    return label
+
+
 def _load_matrix_array(filepath, delimiters=None):
     # pylint: disable=raise-missing-from
     """
@@ -759,7 +974,3 @@ def _load_matrix_array(filepath, delimiters=None):
         # replace all-0 diagonal with all-1 diagonal
         matrix_array = matrix_array + np.eye(matrix_array.shape[0])
     return matrix_array
-
-
-SOFTWARE = {key: Software(key) for key in
-            ["C-PAC", "fMRIPrep", "XCP-D", "xcpEngine"]}
