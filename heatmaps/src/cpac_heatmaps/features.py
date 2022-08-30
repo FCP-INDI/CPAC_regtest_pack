@@ -36,6 +36,27 @@ from .subjects import ATTRIBUTES, UniqueId
 UndefinedType = type(Undefined)
 
 
+class _VariableValue(str):
+    """
+    Singleton to identify a value that should be dynamically defined
+    for a given key
+    """
+    def __repr__(self):
+        return "«Variable Value»"
+
+    def __eq__(self, other):
+        return type(self) is type(other)
+
+    def __hash__(self):
+        return hash(type(self))
+
+    def __ne__(self, other):
+        return type(self) is not type(other)
+
+
+VariableValue = _VariableValue()  # pylint: disable=invalid-name
+
+
 class AFNICommandOutputSpec(TraitedSpec):
     """
     Copyright (c) 2009-2016, Nipype developers
@@ -407,10 +428,13 @@ class CorrelationMethod:
         -------
         spearman_r : CorrelationCoefficient
         """
-        return CorrelationCoefficient(
-            spearmanr(*(matrix.ravel() for matrix in
-                        self.calculate_correlation.matrices)).correlation,
-            'Spearman')
+        if (self.calculate_correlation.matrices[0].shape ==
+                self.calculate_correlation.matrices[2].shape):
+            return CorrelationCoefficient(
+                spearmanr(*(matrix.ravel() for matrix in
+                            self.calculate_correlation.matrices)).correlation,
+                'Spearman')
+        return CorrelationCoefficient(np.nan, 'Spearman')
 
 
 def _forgiving_load(path, fxn, *args, **kwargs):
@@ -723,6 +747,11 @@ class Feature:
         self.softwarefeature[software].regex = regex
 
 
+class Features(dict):
+    """
+    """
+
+
 class Resample(AFNICommand):
     # pylint: disable=abstract-method
     _cmd = "3dresample"
@@ -790,11 +819,18 @@ def filepath_match_entity(filepath, key, value=None):
             filepath_match_entity(filepath, d_key, d_value) for
             d_key, d_value in key.items())
     if isinstance(key, str):
+        # ------------------------------------------------------------
+        # If key starts with '!', return not-match
+        # If both key and value start with '!', the double-negative
+        # will cancel out
+        if key.startswith('!'):
+            return not filepath_match_entity(filepath, key[1:], value)
         f_key = f'{key}-'
         if f_key not in basename:
             if value.startswith('!'):
                 return True
             return False
+        # ------------------------------------------------------------
         check_value = basename.split(f_key, 1)[-1].split('_')[0]
         check_value = strip_int_suffix(check_value)
         value = strip_int_suffix(value)
@@ -909,7 +945,8 @@ def splitext(filename):
     'file', 'nii.gz'
     """
     ignore_area, extension_area = filename[:-8], filename[-8:]
-    extension_area, ext = extension_area.split('.', 1)
+    extension_area, ext = (extension_area.split('.', 1) if
+                           '.' in extension_area else (extension_area, ''))
     return ''.join([ignore_area, extension_area]), ext
 
 

@@ -113,8 +113,6 @@ def generate_heatmap(corrs, var_list, sub_list, save_path=None, title=None):
         return shape
     if not isinstance(corrs, np.ndarray):
         corrs = np.array(corrs)
-    print(116)
-    print(corrs)
     corrs = corrs[~np.isnan(corrs).all(axis=1)]  # drop all-NaN rows
     corrs = corrs[:, ~np.isnan(corrs).all(axis=0)]  # drop all-NaN columns
     # pylint: disable=invalid-name

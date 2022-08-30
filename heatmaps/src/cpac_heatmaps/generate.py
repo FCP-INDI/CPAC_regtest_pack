@@ -22,7 +22,7 @@ import argparse
 import os
 import numpy as np
 from traits.api import Undefined
-from .features import CalculateCorrelationBetween
+from .features import CalculateCorrelationBetween, VariableValue
 from .heatmaps import generate_heatmap
 from .matchup import Matchup
 
@@ -45,15 +45,17 @@ def main():
                         help="name for the correlations run")
     args = parser.parse_args()
     matchup = Matchup(args.outputs_path)
-    print(matchup)
     for software in matchup.software:
         if software.name == "C-PAC":
             matchup.set_method(software, "Pearson_3dTcorrelate",
-                               entities={"desc": "!mean"},
+                               entities={"desc": VariableValue,
+                                         "!desc": "mean"},
                                endswith="_bold.nii.gz")
             matchup.set_method(software, "Pearson", entities={"desc": "mean"},
                                endswith="_bold.nii.gz")
             matchup.set_method(software, "Spearman",
+                               entities={"atlas": VariableValue,
+                                         'desc': VariableValue},
                                endswith="_correlations.tsv", filetype="matrix")
         if software.name == "fMRIPrep":
             # specifically match C-PAC labels
@@ -89,15 +91,9 @@ def main():
         output_dir = os.path.join(
             os.getcwd(), f"correlations_{args.run_name}")
         os.makedirs(output_dir, exist_ok=True)
-        print(88)
-        print(len(matchup.features))
         if corr_data and var_list and matchup.most_specific_ids:
             for imagetype in ["png", "svg"]:
                 # pylint: disable=consider-using-f-string
-                print(89)
-                print(len(corr_data))
-                print(len(var_list))
-                print(len(matchup.most_specific_ids))
                 generate_heatmap(np.array(corr_data).T, list(var_list),
                                  matchup.most_specific_ids,
                                  save_path=os.path.join(output_dir,

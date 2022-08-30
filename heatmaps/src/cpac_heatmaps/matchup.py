@@ -17,7 +17,7 @@ License along with CPAC_regtest_pack. If not, see
 from traits.api import Undefined
 from .directory import determine_software_and_root, entities_from_featurekey, \
                        feature_label_from_filename, separate_working_files
-from .features import Feature
+from .features import Feature, VariableValue
 from .subjects import gather_unique_ids
 
 
@@ -194,6 +194,14 @@ class Matchup:  # pylint: disable=too-many-instance-attributes
         """
         if entities is None and endswith is None:
             entities = feature_label_from_filename(feature_key)
+        if any(_ is VariableValue for _ in entities.values()):
+            # Dynamically set variable values
+            entities.update({_k: _v for _k, _v in
+                             entities_from_featurekey(
+                                feature_label_from_filename(feature_key)
+                            ).items() if _k in entities and
+                            entities[_k] is VariableValue})
+
         for feature_dict in self.features.values():
             if feature_key not in feature_dict:
                 feature_dict[feature_key] = Feature(feature_key,
