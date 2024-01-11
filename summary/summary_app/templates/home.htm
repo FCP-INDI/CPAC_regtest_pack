@@ -1,0 +1,15 @@
+{% extends "layout.htm"%}
+
+{% block content %}
+<div class="content-section">
+    <h5>Box Plots</h5>
+    <div class="navbar-nav mr-auto">
+        <a class="" href="{{ url_for('main.serve_all_boxplot')}}">All</a>
+        <a class="" href="{{ url_for('main.serve_selected_boxplot')}}">Selected</a>
+    </div>
+
+    <h5>Matched Outputs</h5>
+    <h5>Missing Outputs from New</h5>
+    <h5>Missing Outputs from old</h5>
+</div>
+{% endblock content %}
