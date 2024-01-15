@@ -4,6 +4,15 @@ import os
 from summary_app.model import Summary
 from flask import url_for
 from summary_app.config import Config
+from summary_app.config import Config
+
+
+def find_corr_directories():
+    path = Config.ALL_CORR_DIR
+    directories = [d for d in os.listdir(path) if os.path.isdir(os.path.join(path, d))]
+    pipelines = [d.split("_")[-1] for d in os.listdir(path) if os.path.isdir(os.path.join(path, d))]
+    return directories, pipelines
+
 
 def flatten_to_floats(data):
     if data is None:
@@ -24,7 +33,7 @@ def make_plot(summ):
             data_for_boxplot["Value"].extend(values)
     data_for_boxplot["Feature"] = data_for_boxplot["Feature"][::-1]
     fig_selected_boxplot = px.box(data_for_boxplot, x="Value", y="Feature", orientation="h",
-                  title="Selected Plot of Pearson Correlation Values")
+                  title="Selected Plot of Pearson Correlation Values between 185 and 186 abcd-options")
     min_height = 100
     feature_count = len(set(data_for_boxplot["Feature"]))
     calculated_height = min_height + feature_count * 40
@@ -44,7 +53,7 @@ def make_all_boxplot(summ):
         all_boxplot["Value"].extend(values)
     all_boxplot["Feature"] = all_boxplot["Feature"][::-1]
     fig_all_boxplot = px.box(all_boxplot, x="Value", y="Feature", orientation="h",
-                  title="All Matched Path Pearson Correlation Values")
+                  title="All Matched Path Pearson Correlation Values between 185 and 186 abcd-options")
     min_height = 100
     feature_count = len(set(all_boxplot["Feature"]))
     calculated_height = min_height + feature_count * 40

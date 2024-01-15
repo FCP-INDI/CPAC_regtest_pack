@@ -5,7 +5,6 @@ import numpy as np
 import pandas as pd
 from multiprocessing import Pool
 from s3_utils import download_from_s3
-
 Axis = Union[int, Tuple[int, ...]]
 
 class CorrValue(NamedTuple):
@@ -31,20 +30,28 @@ def batch_correlate(
         x_std = np.sqrt(x_var)
         # NOTE: Not trying to fix NaNs
         x_norm = (x - x_mean) / x_std
-        
+
+    except Exception as e:
+        print(f"Batch Correlate Exception for X: {e}\n{x.shape}")       
+    try:
         # Summary stats for y
+        if y.ndim == 3:
+            y= y[..., np.newaxis]
         y_mean = np.mean(y, axis=axis, keepdims=True)
         y_var = np.var(y, axis=axis, keepdims=True)
         y_std = np.sqrt(y_var)
         y_norm = (y - y_mean) / y_std
 
-        
+    except Exception as e:
+        print(f"Batch Correlate Exception for Y: {e}\n{y.shape}")
+    
+    try:
         # Correlation coefficients
         pearson = np.mean(x_norm * y_norm, axis=axis, keepdims=True)
         concor = 2 * pearson * x_std * y_std / (x_var + y_var + (x_mean - y_mean) ** 2)
 
     except Exception as e:
-        print(f"Batch Correlate Exception: {e}")
+        print(f"Batch Correlate Exception for Correlation Coefficients: {e}\n{pearson.shape}")
 
     # Squeeze reduced singleton dimensions
     if axis is not None:
@@ -53,7 +60,7 @@ def batch_correlate(
     
     pearson = np.nanmean(pearson)
     concor = np.nanmean(concor)
-    return CorrValue(concor, pearson)
+    return (concor, pearson)
 
 def correlate_text_based(txt1, txt2):
     # TODO: why do we drop columns containing na?
@@ -169,12 +176,11 @@ def calculate_correlation(args_tuple):
                 new_file_img = nb.load(new_path)
                 new_file_hdr = new_file_img.header
 
-                old_file_dims = old_file_hdr.get_zooms()
-                new_file_dims = new_file_hdr.get_zooms()
-
                 data_1 = nb.load(old_path).get_fdata()
                 data_2 = nb.load(new_path).get_fdata()
 
+                old_file_dims = data_1.shape
+            
             except Exception as e:
                 corr_tuple = ("file reading problem: {0}".format(e), 
                               old_path, new_path)
@@ -184,7 +190,6 @@ def calculate_correlation(args_tuple):
 
         ## set up and run the Pearson correlation and concordance correlation
         if data_1.flatten().shape == data_2.flatten().shape:
-            print(f"SHAPE: {data_1.shape}")
             try:
                 if len(old_file_dims) > 3:
                     axis = tuple(range(3, len(old_file_dims)))
@@ -266,14 +271,12 @@ def run_correlations(matched_dct, input_dct, source='output_dir', quick=False, v
             new_path = matched_path_dct[category][file_id][1]
 
             if source == 'work_dir':
-                continue
                 args_list.append((file_id, old_path, new_path, output_dir, s3_creds, verbose))
             else:
-                if file_id[0].startswith('space-MNI152NLin6ASym_reg-default_desc-preproc_bold'):
-                    args_list.append((category, old_path, new_path, output_dir, s3_creds, verbose))
+                args_list.append((category, old_path, new_path, output_dir, s3_creds, verbose))
 
     print("\nNumber of correlations to calculate: {0}\n".format(len(args_list)))
-
+    total = len(args_list)
     print("Running correlations...")
     p = Pool(input_dct['settings']['n_cpus'])
     corr_tuple_list = p.map(calculate_correlation, args_list)

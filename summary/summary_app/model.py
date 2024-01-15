@@ -4,6 +4,7 @@ from flask import Flask, send_from_directory
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 from summary_app.correlations.utils import read_pickle, read_txt_file
+from summary_app.config import Config
 
 
 class Summary:
@@ -49,3 +50,5 @@ class Summary:
             os.path.join(self.correlations_dir, 'report_missing_new.txt'))
         self.missing_outputs['missing_in_old'] = read_txt_file(
             os.path.join(self.correlations_dir, 'report_missing_old.txt'))
+
+

@@ -32,13 +32,14 @@ def create_unique_file_dict(filepaths, output_folder_path, replacements=None):
         real_filepath = filepath
         if replacements:
             for word_couple in replacements:
-                if "," not in word_couple:
+                if "," not in replacements[word_couple]:
+                    print(replacements[word_couple])
                     err = "\n\n[!] In the replacements text file, the old " \
                           "substring and its replacement must be separated " \
                           "by a comma.\n\n"
                     raise Exception(err)
-                word = word_couple.split(",")[0]
-                new = word_couple.split(",")[1]
+                word = replacements[word_couple].split(",")[0]
+                new = replacements[word_couple].split(",")[1]
                 if word in filepath:
                     path_changes.append("old: {0}".format(filepath))
                     filepath = filepath.replace(word, new)
@@ -185,27 +186,29 @@ def match_filepaths(old_files_dict, new_files_dict):
     missing_in_old = []
     missing_in_new = []
 
-    for key in new_files_dict:
+    for category in new_files_dict:
+        print(f"Category: {category}")
         # for types of derivative...
-        if key in old_files_dict.keys():
-            for file_id in new_files_dict[key]:
-                if file_id in old_files_dict[key].keys():
+        if category in old_files_dict.keys():
+            for file_id in new_files_dict[category]:
+                print(f"File ID : {file_id}")
+                if file_id in old_files_dict.get(category, {}):
+                    if category not in matched_path_dict.keys():
+                        matched_path_dict[category] = {}
 
-                    if key not in matched_path_dict.keys():
-                        matched_path_dict[key] = {}
-
-                    matched_path_dict[key][file_id] = \
-                        old_files_dict[key][file_id] + new_files_dict[key][file_id]
-
+                    matched_path_dict[category][file_id] = \
+                        old_files_dict[category][file_id] + new_files_dict[category][file_id]            
                 else:
+                    print(f"{file_id} not match for :{old_files_dict[category]}")
                     missing_in_old.append(file_id)#new_files_dict[key][file_id])
         else:
-            missing_in_old.append(new_files_dict[key])
+            print(f"Categoty not match :{category}")
+            missing_in_old.append(new_files_dict[category])
 
     # find out what is in the last version's outputs that isn't in the new
     # version's outputs
     for key in old_files_dict:
-        if new_files_dict.get(key) != None:
+        if key not in new_files_dict and key.replace("template", "MNI152NLin6ASym") not in new_files_dict:
             missing_in_new.append(old_files_dict[key])
 
     if len(matched_path_dict) == 0:
