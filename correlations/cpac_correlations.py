@@ -276,7 +276,7 @@ def run_correlations(matched_dct, input_dct, source='output_dir', quick=False, v
                 args_list.append((category, old_path, new_path, output_dir, s3_creds, verbose))
 
     print("\nNumber of correlations to calculate: {0}\n".format(len(args_list)))
-    total = len(args_list)
+
     print("Running correlations...")
     p = Pool(input_dct['settings']['n_cpus'])
     corr_tuple_list = p.map(calculate_correlation, args_list)
