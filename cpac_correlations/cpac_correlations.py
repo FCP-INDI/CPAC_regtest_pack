@@ -1106,14 +1106,15 @@ def parse_args() -> CpacCorrelationsNamespace:
     return parser.parse_args(namespace=CpacCorrelationsNamespace())
 
 
-def main(args: CpacCorrelationsNamespace) -> tuple:
+def main(args: Optional[CpacCorrelationsNamespace] = None) -> tuple[list[str], str, str]:
     """Correlate two C-PAC runs.
 
     • Parse commandline arguments
     • Read input YAML
     • Check for already completed stuff (pickles)
     """
-
+    if args is None:
+        args = parse_args()
     data_source: str = args.data_source
     branch: str = args.branch
 
@@ -1152,7 +1153,7 @@ def main(args: CpacCorrelationsNamespace) -> tuple:
 
 
 if __name__ == "__main__":
-    main(parse_args())
+    main()
 
 cpac_correlations = main
 
