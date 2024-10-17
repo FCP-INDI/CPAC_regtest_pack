@@ -3,11 +3,12 @@
 # SBATCH -N 1
 # SBATCH -p RM-shared
 # SBATCH -t 01:00:00
-# SBATCH --ntasks=1
+# SBATCH --ntasks-per-node=4
 """Calculate correlation coefficients for C-PAC outputs."""
 import argparse
 from collections.abc import Generator
 from fcntl import flock, LOCK_EX, LOCK_UN
+from itertools import chain
 import json
 from multiprocessing import Pool
 import os
@@ -1159,15 +1160,14 @@ def compare_pipelines(
             write_pickle(failures, failures_pkl)
 
     correlations_json: list[dict[str, str]] = [
-        {"rowid": key, "columnid": subjects[i], "value": str(value)}
+        {"rowid": key, "columnid": subjects[i % len(subjects)], "value": str(value)}
         for correlation_type in ["pearson", "concordance"]
         for key, value_list in all_corr_dct[correlation_type].items()
         for i, value in enumerate(value_list)
     ]
-    correlations_json_path: Path = Path(output_dir) / "correlations.json"
-    # TODO: Add lock
-    with correlations_json_path.open("wb") as json_file:
-        pickle.dump(correlations_json, json_file)  # Write the file
+    correlations_json_path: Path = (
+        Path(output_dir).parent / "correlations/correlations.json"
+    )
 
     if correlations_json_path.exists():
         with correlations_json_path.open("r", encoding="utf8") as json_file:
@@ -1243,6 +1243,15 @@ class CpacCorrelationsNamespace(argparse.Namespace):
     branch: str
     data_source: str
     input_yaml: str
+
+    @property
+    def cli_args(self) -> list[str]:
+        """Return list of CLI arg strings."""
+        return list(
+            chain.from_iterable(
+                [[f"--{key}", value] for key, value in vars(self).items()]
+            )
+        )
 
 
 def parse_args() -> CpacCorrelationsNamespace:
