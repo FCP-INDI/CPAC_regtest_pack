@@ -1246,12 +1246,24 @@ class CpacCorrelationsNamespace(argparse.Namespace):
 
     @property
     def cli_args(self) -> list[str]:
-        """Return list of CLI arg strings."""
-        return list(
-            chain.from_iterable(
-                [[f"--{key}", value] for key, value in vars(self).items()]
-            )
-        )
+        """Return list of CLI arg strings.
+
+        >>> CpacCorrelationsNamespace(branch="develop", data_source="HNU_1",
+        ...                           input_yaml="input.yaml").cli_args
+        ['--branch', 'develop', '--data_source', 'HNU_1', 'input.yaml']
+        """
+        return [
+            *list(
+                chain.from_iterable(
+                    [
+                        [f"--{key}", value]
+                        for key, value in vars(self).items()
+                        if key != "input_yaml"
+                    ]
+                )
+            ),
+            self.input_yaml,
+        ]
 
 
 def parse_args() -> CpacCorrelationsNamespace:
