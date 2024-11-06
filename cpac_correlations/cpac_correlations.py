@@ -1171,7 +1171,12 @@ def compare_pipelines(
 
     if correlations_json_path.exists():
         with correlations_json_path.open("r", encoding="utf8") as json_file:
-            correlations_json = [*json.load(json_file), *correlations_json]
+            _loaded_json: list[dict[str, str]] = []
+            try:
+                _loaded_json = json.load(json_file)
+            except json.decoder.JSONDecodeError:
+                pass  # empty or corrupted file
+            correlations_json = [*_loaded_json, *correlations_json]
     with correlations_json_path.open("w", encoding="utf8") as json_file:
         try:
             flock(json_file.fileno(), LOCK_EX)  # Lock the file
