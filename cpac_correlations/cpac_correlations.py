@@ -1,17 +1,37 @@
 #!/usr/bin/env python
-
+# -*- coding: utf-8 -*-
+# SBATCH -N 1
+# SBATCH -p RM-shared
+# SBATCH -t 01:00:00
+# SBATCH --ntasks-per-node=4
+"""Calculate correlation coefficients for C-PAC outputs."""
 import argparse
-import os
-import pickle
 from collections.abc import Generator
+from fcntl import flock, LOCK_EX, LOCK_UN
+from itertools import chain
+import json
 from multiprocessing import Pool
+import os
 from pathlib import Path
-from typing import NamedTuple, Optional, Tuple, Union
+import pickle
+from typing import (
+    Any,
+    cast,
+    Literal,
+    NamedTuple,
+    Optional,
+    overload,
+    Protocol,
+    Tuple,
+    TypedDict,
+    Union,
+)
 
-import nibabel as nb
 import numpy as np
 import pandas as pd
 import yaml
+
+import nibabel as nb
 
 Axis = Union[int, Tuple[int, ...]]
 
@@ -19,8 +39,82 @@ Axis = Union[int, Tuple[int, ...]]
 class CorrValue(NamedTuple):
     """Correlation values"""
 
-    concor: np.ndarray
-    pearson: np.ndarray
+    concor: np.ndarray | float
+    pearson: np.ndarray | float
+
+
+DirType = Literal["output_dir", "work_dir", "log_dir"]
+Replacement = tuple[str, str] | str
+
+
+class InputDctSettings(TypedDict):
+    """Dictionary for input settings."""
+
+    n_cpus: int
+    correlations_dir: str | Path
+    run_name: str
+    s3_creds: Optional[str]
+    quick: bool
+    verbose: bool
+    output_dir: str | Path
+    pickle_dir: str | Path
+
+
+class InputDctPipelines(TypedDict):
+    """Dictionary for input pipelines."""
+
+    output_dir: str | Path
+    work_dir: str | Path
+    log_dir: str | Path
+    pipe_config: str | Path
+    replacements: Optional[list[Replacement]]
+
+
+class InputDct(TypedDict):
+    """Dictionary for correlation inputs."""
+
+    settings: InputDctSettings
+    pipelines: dict[str, InputDctPipelines]
+
+
+OutFilesSubDct = dict[tuple[str, str, str], list[str | Path]]
+OutFilesDct = dict[str, OutFilesSubDct]
+
+
+class MapDict(TypedDict):
+    """Dictionary for maps of correlations."""
+
+    correlations: OutFilesDct
+    pipeline_names: list[str]
+
+
+class MatchedFilepaths(TypedDict):
+    """Dictionary for matched / unmatched filepaths."""
+
+    matched: OutFilesDct
+    missing_old: list[OutFilesSubDct | tuple[str, str, str]]
+    missing_new: list[OutFilesSubDct]
+
+
+CorrelationMap = dict[str, dict[str, float]]
+QuickSummary = dict[str, list[str]]
+
+
+class CorrelationsDct(TypedDict):
+    """Dictionary for all correlations."""
+
+    pearson: dict[str, list[float]]
+    concordance: dict[str, list[float]]
+    sub_optimal: OutFilesSubDct
+
+
+class OrganizeFxn(Protocol):
+    """Function to organize correlation dictionaries."""
+
+    def __call__(
+        self, concor_dct: dict, corr_type: str, quick: bool = False
+    ) -> MapDict:
+        ...
 
 
 def read_yml_file(yml_filepath):
@@ -58,7 +152,13 @@ def write_pickle(dct, out_filepath):
         pickle.dump(dct, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 
-def write_dct(dct=None, text_lines=None, outname=None):
+def write_dct(
+    dct: Optional[dict] = None,
+    text_lines: Optional[list[str]] = None,
+    outname: str = "",
+) -> dict[Any, Any]:
+    if not text_lines or not outname:
+        return {}
     if not dct:
         dct = {outname: text_lines}
     else:
@@ -93,9 +193,7 @@ def gather_local_filepaths(output_folder_path: str) -> list[str]:
 
 
 class SummaryStats:
-    def __init__(
-        self, array: np.ndarray, axis: Optional[Union[int, str]] = None
-    ) -> None:
+    def __init__(self, array: np.ndarray, axis: Optional[int | str] = None) -> None:
         self.mean = np.mean(array, axis=axis)
         self.var = np.var(array, axis=axis)
         self.std = np.sqrt(self.var)
@@ -231,7 +329,7 @@ def correlate_text_based(txts: Union[list, tuple]) -> Generator:
     for i, index in enumerate(indices):
         if index.shape[0]:
             oned.append(
-                pd.read_csv(
+                pd.read_csv(  # type: ignore
                     txts[i], delimiter=delimiters[i], comment="#", index_col=indices[i]
                 )
                 .dropna(axis=1)
@@ -239,14 +337,14 @@ def correlate_text_based(txts: Union[list, tuple]) -> Generator:
             )
         else:
             oned.append(initial_load[i].values)
-    return (np.nanmean(measure) for measure in batch_correlate(*oned, axis=0))
+    return (np.nanmean(measure) for measure in batch_correlate(*oned, axis=0))  # type: ignore
 
 
 def create_unique_file_dict(
     filepaths: list[str],
     output_folder_path: str,
-    replacements: Optional[list[str]] = None,
-) -> dict[str, dict[tuple, str]]:
+    replacements: Optional[list[Replacement]] = None,
+) -> OutFilesDct:
     """
     Parameters
     ----------
@@ -265,7 +363,7 @@ def create_unique_file_dict(
         files_dict["centrality"] =
             {("centrality", midpath, nums): <filepath>, ..}
     """
-    files_dict = {}
+    files_dict: OutFilesDct = {}
 
     for filepath in filepaths:
         if "_stack" in filepath:
@@ -277,13 +375,16 @@ def create_unique_file_dict(
         real_filepath = filepath
         if replacements:
             for word_couple in replacements:
-                if "," not in word_couple:
-                    raise SyntaxError(
-                        "\n\n[!] In the replacements text file, the old "
-                        "substring and its replacement must be separated "
-                        "by a comma.\n\n"
-                    )
-                word, new = word_couple.split(",")
+                if isinstance(word_couple, tuple):
+                    word, new = word_couple
+                else:
+                    if "," not in word_couple:
+                        raise SyntaxError(
+                            "\n\n[!] In the replacements text file, the old "
+                            "substring and its replacement must be separated "
+                            "by a comma.\n\n"
+                        )
+                    word, new = word_couple.split(",")
                 if word in filepath:
                     path_changes.append(f"old: {filepath}")
                     filepath = filepath.replace(word, new)
@@ -349,7 +450,7 @@ def create_unique_file_dict(
         # based on their filepaths)
         file_tuple = (category, midpath, file_nums)
 
-        temp_dict = {}
+        temp_dict: OutFilesSubDct = {}
         temp_dict[file_tuple] = [real_filepath]
 
         if category not in files_dict.keys():
@@ -361,16 +462,16 @@ def create_unique_file_dict(
 
 
 def gather_all_files(
-    input_dct: dict, pickle_dir: str, source: str = "output_dir"
-) -> tuple[dict, dict]:
+    input_dct: InputDct, pickle_dir: str | Path, source: DirType = "output_dir"
+) -> tuple[OutFilesDct, OutFilesDct]:
     """
     Given an input dictionary, a pickle directory, and (optionally) a source,
     returns a pair of dicts
     """
-    file_dct_list = [{}, {}]
-
+    file_dct_list: list[OutFilesDct] = [{}, {}]
+    assert len(input_dct["pipelines"]) == 2
     for index, (key, pipe_dct) in enumerate(input_dct["pipelines"].items()):
-        pipe_outdir = pipe_dct[source]
+        pipe_outdir = str(pipe_dct[source])
 
         if input_dct["settings"]["s3_creds"]:
             if not "s3://" in pipe_outdir:
@@ -397,7 +498,7 @@ def gather_all_files(
                 f"Found output list pickle for {key}, skipping output file"
                 "path parsing.."
             )
-            pipeline_files_dct = read_pickle(output_pkl)
+            pipeline_files_dct: OutFilesDct = read_pickle(output_pkl)
         else:
             if input_dct["settings"]["s3_creds"]:
                 pipeline_files_list = pull_NIFTI_file_list_from_s3(
@@ -409,22 +510,21 @@ def gather_all_files(
                 pipeline_files_list, pipe_outdir, pipe_dct["replacements"]
             )
             write_pickle(pipeline_files_dct, output_pkl)
-
         file_dct_list[index] = pipeline_files_dct
 
-    return tuple(file_dct_list)
+    return cast(tuple[OutFilesDct, OutFilesDct], tuple(file_dct_list))
 
 
 def match_filepaths(
-    old_files_dict: dict[str, dict[tuple, str]],
-    new_files_dict: dict[str, dict[tuple, str]],
-) -> dict[str, dict[tuple,]]:
+    old_files_dict: OutFilesDct,
+    new_files_dict: OutFilesDct,
+) -> MatchedFilepaths:
     """Returns a dictionary mapping each filepath from the first C-PAC
     run to the second one, matched to derivative, strategy, and scan.
 
     Parameters
     ----------
-    old_files_dict, new_files_dict : dict
+    old_files_dict, new_files_dict
         each key is a derivative name, and each value is another
         dictionary keying (derivative, mid-path, last digit in path)
         tuples to a list containing the full filepath described by
@@ -432,15 +532,15 @@ def match_filepaths(
 
     Returns
     -------
-    matched_path_dict : dict
+    matched_path_dict
         same as the input dictionaries, except the list in the
         sub-dictionary value has both file paths that are matched
     """
 
     # file path matching
-    matched_path_dict = {}
-    missing_in_old = []
-    missing_in_new = []
+    matched_path_dict: OutFilesDct = {}
+    missing_in_old: list[OutFilesSubDct | tuple[str, str, str]] = []
+    missing_in_new: list[OutFilesSubDct] = []
 
     for key in new_files_dict:
         # for types of derivative...
@@ -472,7 +572,7 @@ def match_filepaths(
         )
         raise Exception(err)
 
-    matched_files_dct = {
+    matched_files_dct: MatchedFilepaths = {
         "matched": matched_path_dict,
         "missing_old": missing_in_old,
         "missing_new": missing_in_new,
@@ -485,6 +585,7 @@ def delimiter_from_filepath(filepath: Union[Path, str]) -> Optional[str]:
     """
     Given a filepath, return expected value-separator delimiter
     """
+    filepath = str(filepath)
     if filepath.endswith(".tsv"):
         return "\t"
     if filepath.endswith(".csv"):
@@ -698,9 +799,13 @@ def calculate_correlation(args_tuple):
 
 
 def run_correlations(
-    matched_dct, input_dct, source="output_dir", quick=False, verbose=False
+    matched_dct, input_dct: InputDct, source="output_dir", quick=False, verbose=False
 ):
-    all_corr_dct = {"pearson": {}, "concordance": {}, "sub_optimal": {}}
+    all_corr_dct: CorrelationsDct = {
+        "pearson": {},
+        "concordance": {},
+        "sub_optimal": {},
+    }
 
     args_list = []
 
@@ -744,7 +849,7 @@ def run_correlations(
     print("\nNumber of correlations to calculate: {0}\n".format(len(args_list)))
 
     print("Running correlations...")
-    p = Pool(input_dct["settings"]["n_cpus"])
+    p = Pool(int(input_dct["settings"]["n_cpus"]))
     corr_tuple_list = p.map(calculate_correlation, args_list)
     p.close()
     p.join()
@@ -757,7 +862,9 @@ def run_correlations(
         if not corr_tuple:
             continue
         if isinstance(corr_tuple[1], Exception):
-            failures.append((corr_tuple[0], corr_tuple[1], " | ".join(corr_tuple[2])))
+            failures.append(
+                (corr_tuple[0], corr_tuple[1], " | ".join(str(corr_tuple[2])))
+            )
             continue
         if corr_tuple[0] not in all_corr_dct["concordance"].keys():
             all_corr_dct["concordance"][corr_tuple[0]] = []
@@ -771,8 +878,7 @@ def run_correlations(
                 all_corr_dct["sub_optimal"][corr_tuple[0]] = []
             try:
                 all_corr_dct["sub_optimal"][corr_tuple[0]].append(
-                    "{0}:\n{1}\n{2}"
-                    "\n\n".format(corr_tuple[1][0], corr_tuple[3][0], corr_tuple[3][1])
+                    f"{corr_tuple[1][0]}:\n{corr_tuple[3][0]}\n{corr_tuple[3][1]}\n\n"
                 )
             except TypeError:
                 pass
@@ -780,8 +886,10 @@ def run_correlations(
     return all_corr_dct, failures
 
 
-def post180_organize_correlations(concor_dct, corr_type="concordance", quick=False):
-    corr_map_dct = {"correlations": {}}
+def post180_organize_correlations(
+    concor_dct, corr_type="concordance", quick=False
+) -> MapDict:
+    corr_map_dct = cast(MapDict, {"correlations": {}})
     for key in concor_dct:
         if "problem" in key:
             continue
@@ -796,7 +904,7 @@ def post180_organize_correlations(concor_dct, corr_type="concordance", quick=Fal
     return corr_map_dct
 
 
-def organize_correlations(concor_dict, corr_type="concordance", quick=False):
+def organize_correlations(concor_dct, corr_type="concordance", quick=False) -> MapDict:
     # break up all of the correlations into groups - each group of derivatives
     # will go into its own boxplot
 
@@ -808,8 +916,7 @@ def organize_correlations(concor_dict, corr_type="concordance", quick=False):
 
     core = {}
 
-    corr_map_dict = {}
-    corr_map_dict["correlations"] = {}
+    corr_map_dict = cast(MapDict, {"correlations": {}})
 
     derivs = ["alff", "dr_tempreg", "reho", "sca_roi", "timeseries", "ndmg"]
     anats = ["anatomical", "seg"]
@@ -824,39 +931,39 @@ def organize_correlations(concor_dict, corr_type="concordance", quick=False):
     ]
     funcs = ["functional", "displacement"]
 
-    for key in concor_dict:
+    for key in concor_dct:
         if quick:
-            core[key] = concor_dict[key]
+            core[key] = concor_dct[key]
             continue
 
         if "xfm" in key or "mixel" in key:
             continue
 
         if "centrality" in key or "vmhc" in key or "sca_tempreg" in key:
-            template_outputs[key] = concor_dict[key]
+            template_outputs[key] = concor_dct[key]
             continue
 
         for word in anats:
             if word in key:
-                regCorrMap[key] = concor_dict[key]
+                regCorrMap[key] = concor_dct[key]
                 continue
 
         for word in derivs:
             if word in key and "standard" not in key:
-                native_outputs[key] = concor_dict[key]
+                native_outputs[key] = concor_dct[key]
                 continue
             if word in key:
-                template_outputs[key] = concor_dict[key]
+                template_outputs[key] = concor_dct[key]
                 continue
 
         for word in time_series:
             if word in key and "mean" not in key and "mask" not in key:
-                timeseries[key] = concor_dict[key]
+                timeseries[key] = concor_dct[key]
                 continue
 
         for word in funcs:
             if word in key:
-                functionals[key] = concor_dict[key]
+                functionals[key] = concor_dct[key]
 
     if quick:
         group = "{0}_core_outputs".format(corr_type)
@@ -899,9 +1006,11 @@ def organize_correlations(concor_dict, corr_type="concordance", quick=False):
     return corr_map_dict
 
 
-def quick_summary(dct, corr_map_dct, output_dir) -> dict:
+def quick_summary(
+    dct: QuickSummary, corr_map_dct: MapDict, output_dir: str | Path
+) -> QuickSummary:
     for corr_group in corr_map_dct["correlations"].keys():
-        lines = []
+        lines: list[str] = []
         for output_type, corr_vec in dict(
             corr_map_dct["correlations"][corr_group]
         ).items():
@@ -914,7 +1023,7 @@ def quick_summary(dct, corr_map_dct, output_dir) -> dict:
             write_txt_file(
                 lines, os.path.join(output_dir, "average_{0}.txt".format(corr_group))
             )
-            dct = write_dct(dct, lines, output_type)
+            dct = write_dct(dct, lines, str(output_type))
     return dct
 
 
@@ -945,10 +1054,8 @@ def create_boxplot(corr_group, corr_group_name, pipeline_names=None, current_dir
     # pyplot.ylim(0.5,1.2)
     pyplot.xlabel("Derivatives")
     pyplot.title(
-        "Correlations between {0} and {1}\n "
-        "( {2} )".format(
-            list(pipeline_names)[0], list(pipeline_names)[1], corr_group_name
-        )
+        f"Correlations between {list(pipeline_names)[0]} and "
+        f"{list(pipeline_names)[1]}\n( {corr_group_name} )"
     )
 
     output_filename = os.path.join(
@@ -968,11 +1075,27 @@ def create_boxplot(corr_group, corr_group_name, pipeline_names=None, current_dir
     pyplot.close()
 
 
+@overload
 def compare_pipelines(
-    input_dct: dict, dir_type: str = "output_dir"
-) -> tuple[dict, dict]:
+    input_dct: InputDct, dir_type: Literal["log_dir", "work_dir"]
+) -> None:
+    ...
+
+
+@overload
+def compare_pipelines(
+    input_dct: InputDct, dir_type: Literal["output_dir"]
+) -> tuple[dict[str, dict[str, float]], dict[str, dict[str, float]]]:
+    ...
+
+
+def compare_pipelines(
+    input_dct: InputDct, dir_type: DirType = "output_dir"
+) -> Optional[
+    tuple[CorrelationMap, CorrelationMap] | tuple[QuickSummary, QuickSummary]
+]:
     """
-    Given an input dict containing keys 'settings', gather prreviously
+    Given an input dict containing keys 'settings', gather previously
     generated pickles or all relevant output and working files
 
     Returns
@@ -988,14 +1111,15 @@ def compare_pipelines(
     failures_pkl = os.path.join(pickle_dir, f"{dir_type}_failures.p")
     matched_pkl = os.path.join(pickle_dir, f"{dir_type}_matched_files.p")
 
-    all_corr_dct = None
+    all_corr_dct: Optional[CorrelationsDct] = None
+    matched_dct: Optional[MatchedFilepaths] = None
     if os.path.exists(corrs_pkl):
         print(
             f"\n\nFound the correlations pickle: {corrs_pkl}\n\n"
             "Starting from there..\n"
         )
         all_corr_dct = read_pickle(corrs_pkl)
-    elif os.path.exists(matched_pkl):
+    if os.path.exists(matched_pkl):
         print(
             f"\n\nFound the matched filepaths pickle: {matched_pkl}\n\n"
             "Starting from there..\n"
@@ -1016,6 +1140,13 @@ def compare_pipelines(
         if dir_type == "output_dir":
             report_missing(matched_dct, input_dct["pipelines"].keys(), output_dir)
 
+    if not matched_dct:
+        return {}, {}
+
+    subjects: list[str] = [
+        key[2] for key in matched_dct["matched"][list(matched_dct["matched"].keys())[0]]
+    ]
+
     if not all_corr_dct:
         all_corr_dct, failures = run_correlations(
             matched_dct,
@@ -1027,6 +1158,35 @@ def compare_pipelines(
         write_pickle(all_corr_dct, corrs_pkl)
         if failures:
             write_pickle(failures, failures_pkl)
+
+    correlations_json: list[dict[str, str]] = [
+        {"rowid": key, "columnid": subjects[i % len(subjects)], "value": str(value)}
+        for correlation_type in ["pearson", "concordance"]
+        for key, value_list in all_corr_dct[correlation_type].items()
+        for i, value in enumerate(value_list)
+    ]
+    correlations_json_path: Path = (
+        Path(output_dir).parent / "correlations/correlations.json"
+    )
+
+    if correlations_json_path.exists():
+        with correlations_json_path.open("r", encoding="utf8") as json_file:
+            _loaded_json: list[dict[str, str]] = []
+            try:
+                _loaded_json = json.load(json_file)
+            except json.decoder.JSONDecodeError:
+                pass  # empty or corrupted file
+            correlations_json = [*_loaded_json, *correlations_json]
+    with correlations_json_path.open("w", encoding="utf8") as json_file:
+        try:
+            flock(json_file.fileno(), LOCK_EX)  # Lock the file
+            json.dump(correlations_json, json_file, indent=2)
+        finally:
+            flock(json_file.fileno(), LOCK_UN)  # Unlock the file
+    if all_corr_dct["sub_optimal"]:
+        write_yml_file(
+            all_corr_dct["sub_optimal"], os.path.join(output_dir, "sub_optimal.yml")
+        )
 
     if dir_type == "work_dir":
         sorted_vals = []
@@ -1044,33 +1204,28 @@ def compare_pipelines(
             for line in sorted_vals:
                 f.write(line)
                 f.write("\n")
+        return None
 
+    pre180 = False
+    if pre180:
+        organize: OrganizeFxn = organize_correlations
     else:
-        pre180 = False
-        if pre180:
-            organize = organize_correlations
-        else:
-            organize = post180_organize_correlations
+        organize = post180_organize_correlations
 
-        corr_map_dict = organize(
-            all_corr_dct["concordance"],
-            "concordance",
-            quick=input_dct["settings"]["quick"],
-        )
-        corr_map_dict["pipeline_names"] = input_dct["pipelines"].keys()
+    corr_map_dict: MapDict = organize(
+        all_corr_dct["concordance"],
+        "concordance",
+        quick=input_dct["settings"]["quick"],
+    )
+    corr_map_dict["pipeline_names"] = list(input_dct["pipelines"].keys())
 
-        pearson_map_dict = organize(
-            all_corr_dct["pearson"], "pearson", quick=input_dct["settings"]["quick"]
-        )
-        pearson_map_dict["pipeline_names"] = input_dct["pipelines"].keys()
-    dct = {}
+    pearson_map_dict: MapDict = organize(
+        all_corr_dct["pearson"], "pearson", quick=input_dct["settings"]["quick"]
+    )
+    pearson_map_dict["pipeline_names"] = list(input_dct["pipelines"].keys())
+    dct: QuickSummary = {}
     corr_map = quick_summary(dct, corr_map_dict, output_dir)
     pearson_map = quick_summary(dct, pearson_map_dict, output_dir)
-
-    if all_corr_dct["sub_optimal"]:
-        write_yml_file(
-            all_corr_dct["sub_optimal"], os.path.join(output_dir, "sub_optimal.yml")
-        )
 
     for corr_group_name in corr_map_dict["correlations"].keys():
         corr_group = corr_map_dict["correlations"][corr_group_name]
@@ -1094,6 +1249,27 @@ class CpacCorrelationsNamespace(argparse.Namespace):
     data_source: str
     input_yaml: str
 
+    @property
+    def cli_args(self) -> list[str]:
+        """Return list of CLI arg strings.
+
+        >>> CpacCorrelationsNamespace(branch="develop", data_source="HNU_1",
+        ...                           input_yaml="input.yaml").cli_args
+        ['--branch', 'develop', '--data_source', 'HNU_1', 'input.yaml']
+        """
+        return [
+            *list(
+                chain.from_iterable(
+                    [
+                        [f"--{key}", value]
+                        for key, value in vars(self).items()
+                        if key != "input_yaml"
+                    ]
+                )
+            ),
+            self.input_yaml,
+        ]
+
 
 def parse_args() -> CpacCorrelationsNamespace:
     """Parse commandline args."""
@@ -1106,19 +1282,22 @@ def parse_args() -> CpacCorrelationsNamespace:
     return parser.parse_args(namespace=CpacCorrelationsNamespace())
 
 
-def main(args: CpacCorrelationsNamespace) -> tuple:
+def main(
+    args: Optional[CpacCorrelationsNamespace] = None,
+) -> tuple[list[str], str, str]:
     """Correlate two C-PAC runs.
 
     • Parse commandline arguments
     • Read input YAML
     • Check for already completed stuff (pickles)
     """
-
+    if args is None:
+        args = parse_args()
     data_source: str = args.data_source
     branch: str = args.branch
 
     # get the input info
-    input_dct: dict = read_yml_file(args.input_yaml)
+    input_dct: InputDct = read_yml_file(args.input_yaml)
 
     # check for already completed stuff (pickles)
     output_dir: str = os.path.join(
@@ -1139,8 +1318,8 @@ def main(args: CpacCorrelationsNamespace) -> tuple:
 
     input_dct["settings"].update({"output_dir": output_dir, "pickle_dir": pickle_dir})
 
-    corr_map: dict
-    pearson_map: dict
+    corr_map: CorrelationMap
+    pearson_map: CorrelationMap
     corr_map, pearson_map = compare_pipelines(input_dct, dir_type="output_dir")
     corr_map_keys = list(corr_map.keys())
     all_keys: list[str] = []
@@ -1152,7 +1331,7 @@ def main(args: CpacCorrelationsNamespace) -> tuple:
 
 
 if __name__ == "__main__":
-    main(parse_args())
+    main()
 
 cpac_correlations = main
 
