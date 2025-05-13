@@ -24,7 +24,7 @@ use_parentheses = true
 dependencies = ["matplotlib", "nibabel", "numpy", "pandas", "pyyaml"]
 name = "cpac_correlations"
 requires-python = ">= 3.9"
-version = "1.1.0"
+version = "1.1.1"
 
 [project.scripts]
 cpac_correlations = "cpac_correlations:main"

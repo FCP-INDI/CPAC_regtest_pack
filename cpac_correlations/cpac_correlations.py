@@ -1165,9 +1165,10 @@ def compare_pipelines(
         for key, value_list in all_corr_dct[correlation_type].items()
         for i, value in enumerate(value_list)
     ]
-    correlations_json_path: Path = (
-        Path(output_dir).parent / "correlations/correlations.json"
-    )
+    correlations_json_dir: Path = Path(output_dir).parent / "correlations"
+    if not correlations_json_dir.exists():
+        correlations_json_dir.mkdir(parents=True, exist_ok=True)
+    correlations_json_path: Path = correlations_json_dir / "correlations.json"
 
     if correlations_json_path.exists():
         with correlations_json_path.open("r", encoding="utf8") as json_file:
