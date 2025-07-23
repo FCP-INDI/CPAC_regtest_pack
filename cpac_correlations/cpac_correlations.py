@@ -745,8 +745,17 @@ def calculate_correlation(args_tuple):
             old_file_dims = old_file_hdr.get_zooms()
             # new_file_dims = new_file_hdr.get_zooms()
 
-            data_1 = nb.load(old_path).get_fdata()
-            data_2 = nb.load(new_path).get_fdata()
+            old_img = nb.load(old_path)
+            new_img = nb.load(new_path)
+
+            if nb.orientations.aff2axcodes(
+                old_img.affine
+            ) != nb.orientations.aff2axcodes(new_img.affine):
+                # reorient old image to new image's orientation
+                old_img = nb.processing.resample_from_to(old_img, new_img)
+
+            data_1 = old_img.get_fdata()
+            data_2 = new_img.get_fdata()
 
         except Exception as e:
             corr_tuple = (f"file reading problem: {e}", old_path, new_path)
