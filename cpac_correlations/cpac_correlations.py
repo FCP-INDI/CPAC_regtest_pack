@@ -32,6 +32,8 @@ import pandas as pd
 import yaml
 
 import nibabel as nb
+from nibabel.orientations import aff2axcodes
+from nibabel.processing import resample_from_to
 
 Axis = Union[int, Tuple[int, ...]]
 
@@ -748,11 +750,9 @@ def calculate_correlation(args_tuple):
             old_img = nb.load(old_path)
             new_img = nb.load(new_path)
 
-            if nb.orientations.aff2axcodes(
-                old_img.affine
-            ) != nb.orientations.aff2axcodes(new_img.affine):
+            if aff2axcodes(old_img.affine) != aff2axcodes(new_img.affine):
                 # reorient old image to new image's orientation
-                old_img = nb.processing.resample_from_to(old_img, new_img)
+                old_img = resample_from_to(old_img, new_img)
 
             data_1 = old_img.get_fdata()
             data_2 = new_img.get_fdata()
