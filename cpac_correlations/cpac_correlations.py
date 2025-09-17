@@ -7,6 +7,7 @@
 """Calculate correlation coefficients for C-PAC outputs."""
 import argparse
 from collections.abc import Generator
+from dataclasses import dataclass
 from fcntl import flock, LOCK_EX, LOCK_UN
 from itertools import chain
 import json
@@ -14,6 +15,7 @@ from multiprocessing import Pool
 import os
 from pathlib import Path
 import pickle
+import re
 from typing import (
     Any,
     cast,
@@ -79,7 +81,36 @@ class InputDct(TypedDict):
     pipelines: dict[str, InputDctPipelines]
 
 
-OutFilesSubDct = dict[tuple[str, str, str], list[str | Path]]
+@dataclass
+class OutFilesId:
+    """Identifier for output files."""
+
+    output: str
+    midpath: str | Path
+    subject: str
+    _session: Optional[str] = None
+    _session_set: bool = False
+
+    @property
+    def session(self) -> Optional[str]:
+        """Extract session ID from midpath and subject."""
+        if not self._session_set:
+            match = re.search(
+                r"ses-([^/_-]+)", "/".join([str(self.midpath), self.subject])
+            )
+            self._session = match.group(1) if match else None
+            self._session_set = True
+        return self._session
+
+    def __str__(self) -> str:
+        """String representation of the OutFilesId."""
+        if self.session:
+            return f"('{self.output}', '{self.midpath}', '{self.subject}', '{self.session}')"
+        else:
+            return f"('{self.output}', '{self.midpath}', '{self.subject}')"
+
+
+OutFilesSubDct = dict[OutFilesId, list[str | Path]]
 OutFilesDct = dict[str, OutFilesSubDct]
 
 
@@ -94,7 +125,7 @@ class MatchedFilepaths(TypedDict):
     """Dictionary for matched / unmatched filepaths."""
 
     matched: OutFilesDct
-    missing_old: list[OutFilesSubDct | tuple[str, str, str]]
+    missing_old: list[OutFilesSubDct | OutFilesId]
     missing_new: list[OutFilesSubDct]
 
 
@@ -450,7 +481,7 @@ def create_unique_file_dict(
         # identified without relying on its full path (as it would be
         # impossible to match files from two regression tests just
         # based on their filepaths)
-        file_tuple = (category, midpath, file_nums)
+        file_tuple = OutFilesId(category, midpath, file_nums)
 
         temp_dict: OutFilesSubDct = {}
         temp_dict[file_tuple] = [real_filepath]
@@ -541,7 +572,7 @@ def match_filepaths(
 
     # file path matching
     matched_path_dict: OutFilesDct = {}
-    missing_in_old: list[OutFilesSubDct | tuple[str, str, str]] = []
+    missing_in_old: list[OutFilesSubDct | OutFilesId] = []
     missing_in_new: list[OutFilesSubDct] = []
 
     for key in new_files_dict:
