@@ -91,6 +91,28 @@ class OutFilesId:
     _session: Optional[str] = None
     _session_set: bool = False
 
+    def __getitem__(self, index: int) -> Optional[str]:
+        """Get item by index like a tuple."""
+        match index:
+            case 0:
+                return self.output
+            case 1:
+                return str(self.midpath)
+            case 2:
+                return self.subject
+            case 3:
+                return self.session
+            case _:
+                raise IndexError("Index out of range.")
+
+    def __hash__(self) -> int:
+        """Hash function for the OutFilesId."""
+        return hash((self.output, self.midpath, self.subject, self.session))
+
+    def __len__(self) -> int:
+        """Length of the OutFilesId."""
+        return 4 if self.session else 3
+
     @property
     def session(self) -> Optional[str]:
         """Extract session ID from midpath and subject."""
@@ -101,6 +123,18 @@ class OutFilesId:
             self._session = match.group(1) if match else None
             self._session_set = True
         return self._session
+
+    def __setitem__(self, index: int, value: str) -> None:
+        """Set item by index like a tuple."""
+        match index:
+            case 0:
+                self.output = value
+            case 1:
+                self.midpath = value
+            case 2:
+                self.subject = value
+            case _:
+                raise IndexError("Index out of range.")
 
     def __str__(self) -> str:
         """String representation of the OutFilesId."""
