@@ -41,10 +41,27 @@ Axis = Union[int, Tuple[int, ...]]
 
 
 class CorrValue(NamedTuple):
-    """Correlation values"""
+    """Correlation coefficient values"""
 
     concor: np.ndarray | float
     pearson: np.ndarray | float
+    config_name: str
+    feature: str
+    subject: str
+    session: Optional[str] = None
+
+    @property
+    def columnid(self) -> str:
+        """Column identifier for correlation values."""
+        if self.session:
+            return f"sub={self.subject}_ses-{self.session}"
+        else:
+            return f"sub-{self.subject}"
+
+    @property
+    def rowid(self) -> str:
+        """Row identifier for correlation values."""
+        return self.feature
 
 
 DirType = Literal["output_dir", "work_dir", "log_dir"]
@@ -1232,7 +1249,6 @@ def compare_pipelines(
         write_pickle(all_corr_dct, corrs_pkl)
         if failures:
             write_pickle(failures, failures_pkl)
-
     correlations_json: list[dict[str, str]] = [
         {"rowid": key, "columnid": subjects[i % len(subjects)], "value": str(value)}
         for correlation_type in ["pearson", "concordance"]
