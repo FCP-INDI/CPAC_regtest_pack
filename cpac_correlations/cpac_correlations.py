@@ -12,6 +12,7 @@ from fcntl import flock, LOCK_EX, LOCK_UN
 from itertools import chain
 import json
 from multiprocessing import Pool
+from operator import methodcaller
 import os
 from pathlib import Path
 import pickle
@@ -20,11 +21,9 @@ from typing import (
     Any,
     cast,
     Literal,
-    NamedTuple,
     Optional,
     overload,
     Protocol,
-    Tuple,
     TypedDict,
     Union,
 )
@@ -37,18 +36,34 @@ import nibabel as nb
 from nibabel.orientations import aff2axcodes
 from nibabel.processing import resample_from_to
 
-Axis = Union[int, Tuple[int, ...]]
+Axis = Union[int, tuple[int, ...]]
+
+_text_based_exts = ("csv", "txt", "1D", "tsv")
 
 
-class CorrValue(NamedTuple):
+@dataclass
+class CorrValue:
     """Correlation coefficient values"""
 
-    concor: np.ndarray | float
-    pearson: np.ndarray | float
-    config_name: str
     feature: str
+    old_path: Path
+    new_path: Path
+    output_dir: Path
     subject: str
     session: Optional[str] = None
+    s3_creds: Optional[str] = None
+    verbose: bool = False
+    concor: np.ndarray = np.ndarray(0)
+    pearson: np.ndarray = np.ndarray(0)
+
+    def __post_init__(self):
+        """Coerce path strings to Path objects."""
+        if isinstance(self.old_path, str):
+            self.old_path = Path(self.old_path)
+        if isinstance(self.new_path, str):
+            self.new_path = Path(self.new_path)
+        if isinstance(self.output_dir, str):
+            self.output_dir = Path(self.output_dir)
 
     @property
     def columnid(self) -> str:
@@ -62,6 +77,170 @@ class CorrValue(NamedTuple):
     def rowid(self) -> str:
         """Row identifier for correlation values."""
         return self.feature
+
+    def _set_local(self, which_one: Literal["old", "new"]) -> Path:
+        """Set local file for old or new file."""
+        local_file = (
+            self.output_dir
+            / "s3_input_files"
+            / str(getattr(self, f"{which_one}_path")).replace("s3://", "")
+        )
+        local_path = local_file.absolute().parent
+        if not local_path.exists():
+            try:
+                local_path.mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                err = (
+                    "\n\nLocals: {0}\n\n[!] Could not create the local S3 "
+                    "download directory.\nLocal path: {1}\n\nError details: {2}\n\n".format(
+                        locals(), local_path, e
+                    )
+                )
+                raise type(e)(err)
+        if not local_file.exists():
+            try:
+                local_file = download_from_s3(
+                    getattr(self, f"{which_one}_path"), local_path, self.s3_creds
+                )
+            except Exception as e:
+                err = (
+                    "\n\nLocals: {0}\n\n[!] Could not download the files from "
+                    "the S3 bucket. \nS3 filepath: {1}\nLocal destination: {2}"
+                    "\nS3 creds: {3}\n\nError details: {4}\n\n".format(
+                        locals(),
+                        getattr(self, f"{which_one}_path"),
+                        local_path,
+                        self.s3_creds,
+                        e,
+                    )
+                )
+                raise type(e)(err)
+        return local_file
+
+    def calculate_correlation(
+        self,
+    ) -> "CorrValue" | tuple[str, Exception, tuple[Path, Path]]:
+        """Calculate correlation between old and new file paths."""
+        if self.verbose:
+            print(
+                f"Calculating correlation between {self.old_path} and {self.new_path}"
+            )
+
+        corr_tuple = None
+
+        if self.s3_creds:
+            old_local_file = self._set_local("old")
+            new_local_file = self._set_local("new")
+        else:
+            old_local_file = self.old_path
+            new_local_file = self.new_path
+
+        ## nibabel to pull the data from the re-assembled file paths
+        if old_local_file.exists() and new_local_file.exists():
+            if any(
+                [ext in _text_based_exts for ext in old_local_file.suffixes]
+            ) and any([ext in _text_based_exts for ext in new_local_file.suffixes]):
+                try:
+                    self.concor, self.pearson = correlate_text_based(
+                        (old_local_file, new_local_file)
+                    )
+                except Exception as e:
+                    return self.feature, e, (old_local_file, new_local_file)
+
+                if concor > 0.980:
+                    corr_tuple = (self.feature, [concor], [pearson])
+                else:
+                    corr_tuple = (
+                        self.feature,
+                        [concor],
+                        [pearson],
+                        (old_local_file, new_local_file),
+                    )
+                if self.verbose:
+                    print("Success - {0}".format(str(concor)))
+
+                return corr_tuple
+
+            try:
+                old_file_img = nb.load(old_local_file)
+                old_file_hdr = old_file_img.header
+                new_file_img = nb.load(new_local_file)
+                new_file_hdr = new_file_img.header
+
+                old_file_dims = old_file_hdr.get_zooms()
+                # new_file_dims = new_file_hdr.get_zooms()
+
+                old_img = nb.load(old_local_file)
+                new_img = nb.load(new_local_file)
+
+                if aff2axcodes(old_img.affine) != aff2axcodes(new_img.affine):
+                    # reorient old image to new image's orientation
+                    old_img = resample_from_to(old_img, new_img)
+
+                data_1 = old_img.get_fdata()
+                data_2 = new_img.get_fdata()
+
+            except Exception as e:
+                corr_tuple = (
+                    f"file reading problem: {e}",
+                    old_local_file,
+                    new_local_file,
+                )
+                if self.verbose:
+                    print(str(corr_tuple))
+                return corr_tuple
+
+            ## set up and run the Pearson correlation and concordance correlation
+            if data_1.flatten().shape == data_2.flatten().shape:
+                try:
+                    if len(old_file_dims) > 3:
+                        axis = tuple(range(3, len(old_file_dims)))
+                        concor, pearson = batch_correlate(data_1, data_2, axis=axis)
+                        concor = np.nanmean(concor)
+                        pearson = np.nanmean(pearson)
+                    else:
+                        concor, pearson = batch_correlate(data_1, data_2)
+                except Exception as e:
+                    corr_tuple = (
+                        f"correlating problem: {e}",
+                        old_local_file,
+                        new_local_file,
+                    )
+                    if verbose:
+                        print(str(corr_tuple))
+                    return corr_tuple
+                if concor > 0.980:
+                    corr_tuple = (self.feature, [concor], [pearson])
+                else:
+                    corr_tuple = (
+                        self.feature,
+                        [concor],
+                        [pearson],
+                        (old_local_file, new_local_file),
+                    )
+                if self.verbose:
+                    print("Success - {0}".format(str(concor)))
+            else:
+                corr_tuple = ("different shape", old_local_file, new_local_file)
+                if self.verbose:
+                    print(str(corr_tuple))
+
+        else:
+            if not os.path.exists(old_local_file):
+                corr_tuple = ("file doesn't exist", [old_local_file], None)
+                if self.verbose:
+                    print(str(corr_tuple))
+            if not os.path.exists(new_local_file):
+                if not corr_tuple:
+                    corr_tuple = ("file doesn't exist", [new_local_file], None)
+                    if self.verbose:
+                        print(str(corr_tuple))
+                else:
+                    corr_tuple = ("file doesn't exist", old_local_file, new_local_file)
+                    if self.verbose:
+                        print(str(corr_tuple))
+
+        return self
 
 
 DirType = Literal["output_dir", "work_dir", "log_dir"]
@@ -353,7 +532,7 @@ def parse_csv_data(csv_lines):
 
 def batch_correlate(
     x: np.ndarray, y: np.ndarray, axis: Optional[Axis] = None
-) -> CorrValue:
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Compute a batch of concordance and Pearson correlation coefficients between
     x and y along an axis (or axes).
@@ -365,7 +544,7 @@ def batch_correlate(
     try:
         summary_stats = {"x": SummaryStats(x), "y": SummaryStats(y)}
     except ZeroDivisionError:
-        return CorrValue(np.nan, np.nan)
+        return np.ndarray(0), np.ndarray(0)
 
     # Correlation coefficients
     pearson = np.mean(summary_stats["x"].norm * summary_stats["y"].norm, axis=axis)
@@ -384,16 +563,18 @@ def batch_correlate(
     if axis is not None and 1 in concor.shape:
         concor = np.squeeze(concor, axis=axis)
         pearson = np.squeeze(pearson, axis=axis)
-    return CorrValue(concor, pearson)
+    return concor, pearson
 
 
-def correlate_text_based(txts: Union[list, tuple]) -> Generator:
+def correlate_text_based(txts: Union[list, tuple]) -> tuple[float, float]:
+    """Correlate text-based data from multiple files."""
     delimiters = tuple(delimiter_from_filepath(path) for path in txts)
     # TODO: why do we drop columns containing na?
     initial_load = [
         pd.read_csv(txt, delimiter=delimiters[i], comment="#").dropna(axis=1)
         for i, txt in enumerate(txts)
     ]
+    indices = []
     for i, df in enumerate(initial_load):
         # if we read a value-row as a header, fix that
         try:
@@ -403,25 +584,31 @@ def correlate_text_based(txts: Union[list, tuple]) -> Generator:
             ).dropna(axis=1)
         except ValueError:
             pass
-    # assume string columns are indices and not values to correlate
-    indices = []
-    for i in range(len(initial_load)):
-        indices.append(
-            np.where(df.apply(lambda _: _.dtype == np.dtypes.ObjectDType))[0]
-        )
+        # assume string columns are indices and not values to correlate
+        indices = []
+        for i in range(len(initial_load)):
+            indices.append(
+                np.where(df.apply(lambda _: _.dtype == np.dtypes.ObjectDType))[0]
+            )
     oned = []
     for i, index in enumerate(indices):
         if index.shape[0]:
             oned.append(
                 pd.read_csv(  # type: ignore
-                    txts[i], delimiter=delimiters[i], comment="#", index_col=indices[i]
+                    txts[i],
+                    delimiter=delimiters[i],
+                    comment="#",
+                    index_col=indices[i],
                 )
                 .dropna(axis=1)
                 .values
             )
         else:
             oned.append(initial_load[i].values)
-    return (np.nanmean(measure) for measure in batch_correlate(*oned, axis=0))  # type: ignore
+    return cast(
+        tuple[float, float],
+        (np.nanmean(measure) for measure in batch_correlate(*oned, axis=0)),
+    )
 
 
 def create_unique_file_dict(
@@ -729,168 +916,12 @@ def report_missing(matched_dct, pipelines, output_dir):
             f.write(report_msg)
 
 
-def calculate_correlation(args_tuple):
-    category = args_tuple[0]
-    old_path = args_tuple[1]
-    new_path = args_tuple[2]
-    local_dir = args_tuple[3]
-    s3_creds = args_tuple[4]
-    verbose = args_tuple[5]
-
-    if verbose:
-        print("Calculating correlation between {0} and {1}".format(old_path, new_path))
-
-    corr_tuple = None
-
-    if s3_creds:
-        try:
-            # full filepath with filename
-            old_local_file = os.path.join(
-                local_dir, "s3_input_files", old_path.replace("s3://", "")
-            )
-            # directory without filename
-            old_local_path = old_local_file.replace(old_path.split("/")[-1], "")
-
-            new_local_file = os.path.join(
-                local_dir, "s3_input_files", new_path.replace("s3://", "")
-            )
-            new_local_path = new_local_file.replace(new_path.split("/")[-1], "")
-
-            if not os.path.exists(old_local_path):
-                os.makedirs(old_local_path)
-            if not os.path.exists(new_local_path):
-                os.makedirs(new_local_path)
-
-        except Exception as e:
-            err = (
-                "\n\nLocals: {0}\n\n[!] Could not create the local S3 "
-                "download directory.\n\nError details: {1}\n\n".format(locals(), e)
-            )
-            raise Exception(err)
-
-        try:
-            if not os.path.exists(old_local_file):
-                old_path = download_from_s3(old_path, old_local_path, s3_creds)
-            else:
-                old_path = old_local_file
-        except Exception as e:
-            err = (
-                "\n\nLocals: {0}\n\n[!] Could not download the files from "
-                "the S3 bucket. \nS3 filepath: {1}\nLocal destination: {2}"
-                "\nS3 creds: {3}\n\nError details: {4}\n\n".format(
-                    locals(), old_path, old_local_path, s3_creds, e
-                )
-            )
-            raise Exception(e)
-
-        try:
-            if not os.path.exists(new_local_file):
-                new_path = download_from_s3(new_path, new_local_path, s3_creds)
-            else:
-                new_path = new_local_file
-        except Exception as e:
-            err = (
-                "\n\nLocals: {0}\n\n[!] Could not download the files from "
-                "the S3 bucket. \nS3 filepath: {1}\nLocal destination: {2}"
-                "\nS3 creds: {3}\n\nError details: {4}\n\n".format(
-                    locals(), new_path, new_local_path, s3_creds, e
-                )
-            )
-            raise Exception(e)
-
-    ## nibabel to pull the data from the re-assembled file paths
-    if os.path.exists(old_path) and os.path.exists(new_path):
-        if (
-            (".csv" in old_path and ".csv" in new_path)
-            or (".txt" in old_path and ".txt" in new_path)
-            or (".1D" in old_path and ".1D" in new_path)
-            or (".tsv" in old_path and ".tsv" in new_path)
-        ):
-            try:
-                concor, pearson = correlate_text_based((old_path, new_path))
-            except Exception as e:
-                return category, e, (old_path, new_path)
-
-            if concor > 0.980:
-                corr_tuple = (category, [concor], [pearson])
-            else:
-                corr_tuple = (category, [concor], [pearson], (old_path, new_path))
-            if verbose:
-                print("Success - {0}".format(str(concor)))
-
-            return corr_tuple
-
-        try:
-            old_file_img = nb.load(old_path)
-            old_file_hdr = old_file_img.header
-            new_file_img = nb.load(new_path)
-            new_file_hdr = new_file_img.header
-
-            old_file_dims = old_file_hdr.get_zooms()
-            # new_file_dims = new_file_hdr.get_zooms()
-
-            old_img = nb.load(old_path)
-            new_img = nb.load(new_path)
-
-            if aff2axcodes(old_img.affine) != aff2axcodes(new_img.affine):
-                # reorient old image to new image's orientation
-                old_img = resample_from_to(old_img, new_img)
-
-            data_1 = old_img.get_fdata()
-            data_2 = new_img.get_fdata()
-
-        except Exception as e:
-            corr_tuple = (f"file reading problem: {e}", old_path, new_path)
-            if verbose:
-                print(str(corr_tuple))
-            return corr_tuple
-
-        ## set up and run the Pearson correlation and concordance correlation
-        if data_1.flatten().shape == data_2.flatten().shape:
-            try:
-                if len(old_file_dims) > 3:
-                    axis = tuple(range(3, len(old_file_dims)))
-                    concor, pearson = batch_correlate(data_1, data_2, axis=axis)
-                    concor = np.nanmean(concor)
-                    pearson = np.nanmean(pearson)
-                else:
-                    concor, pearson = batch_correlate(data_1, data_2)
-            except Exception as e:
-                corr_tuple = (f"correlating problem: {e}", old_path, new_path)
-                if verbose:
-                    print(str(corr_tuple))
-                return corr_tuple
-            if concor > 0.980:
-                corr_tuple = (category, [concor], [pearson])
-            else:
-                corr_tuple = (category, [concor], [pearson], (old_path, new_path))
-            if verbose:
-                print("Success - {0}".format(str(concor)))
-        else:
-            corr_tuple = ("different shape", old_path, new_path)
-            if verbose:
-                print(str(corr_tuple))
-
-    else:
-        if not os.path.exists(old_path):
-            corr_tuple = ("file doesn't exist", [old_path], None)
-            if verbose:
-                print(str(corr_tuple))
-        if not os.path.exists(new_path):
-            if not corr_tuple:
-                corr_tuple = ("file doesn't exist", [new_path], None)
-                if verbose:
-                    print(str(corr_tuple))
-            else:
-                corr_tuple = ("file doesn't exist", old_path, new_path)
-                if verbose:
-                    print(str(corr_tuple))
-
-    return corr_tuple
-
-
 def run_correlations(
-    matched_dct, input_dct: InputDct, source="output_dir", quick=False, verbose=False
+    matched_dct: MatchedFilepaths,
+    input_dct: InputDct,
+    source="output_dir",
+    quick=False,
+    verbose=False,
 ):
     all_corr_dct: CorrelationsDct = {
         "pearson": {},
@@ -898,7 +929,7 @@ def run_correlations(
         "sub_optimal": {},
     }
 
-    args_list = []
+    args_list: list[CorrValue] = []
 
     quick_list = [
         "anatomical_brain",
@@ -924,24 +955,44 @@ def run_correlations(
             if category not in quick_list:
                 continue
 
-        for file_id in matched_path_dct[category].keys():
-            old_path = matched_path_dct[category][file_id][0]
-            new_path = matched_path_dct[category][file_id][1]
+        for file_id, ofi in matched_path_dct[category].items():
+            old_path = ofi[0]
+            new_path = ofi[1]
 
             if source == "work_dir":
                 args_list.append(
-                    (file_id, old_path, new_path, output_dir, s3_creds, verbose)
+                    CorrValue(
+                        file_id.output,
+                        old_path,
+                        new_path,
+                        output_dir,
+                        file_id.subject,
+                        file_id.session,
+                        s3_creds,
+                        verbose,
+                    )
                 )
             else:
                 args_list.append(
-                    (category, old_path, new_path, output_dir, s3_creds, verbose)
+                    CorrValue(
+                        category,
+                        old_path,
+                        new_path,
+                        output_dir,
+                        file_id.subject,
+                        file_id.session,
+                        s3_creds,
+                        verbose,
+                    )
                 )
 
     print("\nNumber of correlations to calculate: {0}\n".format(len(args_list)))
 
     print("Running correlations...")
     p = Pool(int(input_dct["settings"]["n_cpus"]))
-    corr_tuple_list = p.map(calculate_correlation, args_list)
+    correlation_list: list[
+        CorrValue | tuple[str, Exception, tuple[Path, Path]]
+    ] = p.map(methodcaller("calculate_correlation"), args_list)
     p.close()
     p.join()
 
@@ -949,30 +1000,31 @@ def run_correlations(
 
     failures = []
 
-    for corr_tuple in corr_tuple_list:
-        if not corr_tuple:
+    for correlation in correlation_list:
+        if not correlation:
             continue
-        if isinstance(corr_tuple[1], Exception):
-            failures.append(
-                (corr_tuple[0], corr_tuple[1], " | ".join(str(corr_tuple[2])))
-            )
-            continue
-        if corr_tuple[0] not in all_corr_dct["concordance"].keys():
-            all_corr_dct["concordance"][corr_tuple[0]] = []
-        if corr_tuple[0] not in all_corr_dct["pearson"].keys():
-            all_corr_dct["pearson"][corr_tuple[0]] = []
-        all_corr_dct["concordance"][corr_tuple[0]] += corr_tuple[1]
-        all_corr_dct["pearson"][corr_tuple[0]] += corr_tuple[2]
-
-        if len(corr_tuple) > 3:
-            if corr_tuple[0] not in all_corr_dct["sub_optimal"].keys():
-                all_corr_dct["sub_optimal"][corr_tuple[0]] = []
-            try:
-                all_corr_dct["sub_optimal"][corr_tuple[0]].append(
-                    f"{corr_tuple[1][0]}:\n{corr_tuple[3][0]}\n{corr_tuple[3][1]}\n\n"
+        if isinstance(correlation, tuple):
+            if isinstance(correlation[1], Exception):
+                failures.append(
+                    (correlation[0], correlation[1], " | ".join(str(correlation[2])))
                 )
-            except TypeError:
-                pass
+            continue
+        if correlation.feature not in all_corr_dct["concordance"].keys():
+            all_corr_dct["concordance"][correlation.feature] = []
+        if correlation.feature not in all_corr_dct["pearson"].keys():
+            all_corr_dct["pearson"][correlation.feature] = []
+        all_corr_dct["concordance"][correlation.feature] += correlation.concor
+        all_corr_dct["pearson"][correlation.feature] += correlation.pearson
+
+        # if len(correlation) > 3:
+        #     if correlation[0] not in all_corr_dct["sub_optimal"].keys():
+        #         all_corr_dct["sub_optimal"][correlation[0]] = []
+        #     try:
+        #         all_corr_dct["sub_optimal"][correlation[0]].append(
+        #             f"{correlation[1][0]}:\n{correlation[3][0]}\n{correlation[3][1]}\n\n"
+        #         )
+        #     except TypeError:
+        #         pass
 
     return all_corr_dct, failures
 
@@ -1234,9 +1286,13 @@ def compare_pipelines(
     if not matched_dct:
         return {}, {}
 
-    subjects: list[str] = [
-        key[2] for key in matched_dct["matched"][list(matched_dct["matched"].keys())[0]]
-    ]
+    subjects = cast(
+        list[str],
+        [
+            key[2]
+            for key in matched_dct["matched"][list(matched_dct["matched"].keys())[0]]
+        ],
+    )
 
     if not all_corr_dct:
         all_corr_dct, failures = run_correlations(
