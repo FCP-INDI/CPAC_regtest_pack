@@ -20,6 +20,9 @@ sections = ["FUTURE",
 split_on_trailing_comma = true
 use_parentheses = true
 
+[tool.pyright]
+stubPath = "./stubs"
+
 [project]
 dependencies = ["matplotlib", "nibabel", "numpy", "pandas", "pyyaml"]
 name = "cpac_correlations"

@@ -8,6 +8,7 @@
 import argparse
 from collections.abc import Generator
 from dataclasses import dataclass
+from errno import ENOENT
 from fcntl import flock, LOCK_EX, LOCK_UN
 from itertools import chain
 import json
@@ -32,7 +33,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
-import nibabel as nb
+import nibabel as nib
 from nibabel.orientations import aff2axcodes
 from nibabel.processing import resample_from_to
 
@@ -53,8 +54,11 @@ class CorrValue:
     session: Optional[str] = None
     s3_creds: Optional[str] = None
     verbose: bool = False
+    acceptable: float = 0.980
     concor: np.ndarray = np.ndarray(0)
     pearson: np.ndarray = np.ndarray(0)
+    _exception: Optional[Exception | list[Exception]] = None
+    """Private exception holder."""
 
     def __post_init__(self):
         """Coerce path strings to Path objects."""
@@ -64,6 +68,26 @@ class CorrValue:
             self.new_path = Path(self.new_path)
         if isinstance(self.output_dir, str):
             self.output_dir = Path(self.output_dir)
+
+    @property
+    def exception(self) -> Optional[Exception | list[Exception]]:
+        """Get the exception(s)."""
+        return self._exception
+
+    @exception.setter
+    def exception(self, exc: Optional[Exception | list[Exception]]) -> None:
+        """Set the exception(s)."""
+        if not isinstance(exc, (Exception, list)) and exc is not None:
+            msg = f"Invalid exception type: {type(exc)}."
+            raise TypeError(msg)
+        if isinstance(self._exception, list):
+            if exc:
+                if isinstance(exc, list):
+                    self._exception.extend(exc)
+                else:
+                    self._exception.append(exc)
+        else:
+            self._exception = exc
 
     @property
     def columnid(self) -> str:
@@ -119,7 +143,7 @@ class CorrValue:
 
     def calculate_correlation(
         self,
-    ) -> "CorrValue" | tuple[str, Exception, tuple[Path, Path]]:
+    ) -> "CorrValue":
         """Calculate correlation between old and new file paths."""
         if self.verbose:
             print(
@@ -141,37 +165,28 @@ class CorrValue:
                 [ext in _text_based_exts for ext in old_local_file.suffixes]
             ) and any([ext in _text_based_exts for ext in new_local_file.suffixes]):
                 try:
-                    self.concor, self.pearson = correlate_text_based(
+                    concor, pearson = correlate_text_based(
                         (old_local_file, new_local_file)
                     )
+                    self.concor = np.array([concor])
+                    self.pearson = np.array([pearson])
+                    if self.verbose:
+                        print(f"Success - {concor}")
                 except Exception as e:
-                    return self.feature, e, (old_local_file, new_local_file)
-
-                if concor > 0.980:
-                    corr_tuple = (self.feature, [concor], [pearson])
-                else:
-                    corr_tuple = (
-                        self.feature,
-                        [concor],
-                        [pearson],
-                        (old_local_file, new_local_file),
-                    )
-                if self.verbose:
-                    print("Success - {0}".format(str(concor)))
-
-                return corr_tuple
+                    self.exception = e
+                return self
 
             try:
-                old_file_img = nb.load(old_local_file)
+                old_file_img = nib.load(old_local_file)
                 old_file_hdr = old_file_img.header
-                new_file_img = nb.load(new_local_file)
-                new_file_hdr = new_file_img.header
+                new_file_img = nib.load(new_local_file)
+                # new_file_hdr = new_file_img.header
 
                 old_file_dims = old_file_hdr.get_zooms()
                 # new_file_dims = new_file_hdr.get_zooms()
 
-                old_img = nb.load(old_local_file)
-                new_img = nb.load(new_local_file)
+                old_img = nib.load(old_local_file)
+                new_img = nib.load(new_local_file)
 
                 if aff2axcodes(old_img.affine) != aff2axcodes(new_img.affine):
                     # reorient old image to new image's orientation
@@ -188,7 +203,8 @@ class CorrValue:
                 )
                 if self.verbose:
                     print(str(corr_tuple))
-                return corr_tuple
+                self.exception = e
+                return self
 
             ## set up and run the Pearson correlation and concordance correlation
             if data_1.flatten().shape == data_2.flatten().shape:
@@ -198,48 +214,37 @@ class CorrValue:
                         concor, pearson = batch_correlate(data_1, data_2, axis=axis)
                         concor = np.nanmean(concor)
                         pearson = np.nanmean(pearson)
+                        self.concor = np.array([concor])
+                        self.pearson = np.array([pearson])
                     else:
-                        concor, pearson = batch_correlate(data_1, data_2)
+                        self.concor, self.pearson = batch_correlate(data_1, data_2)
                 except Exception as e:
                     corr_tuple = (
                         f"correlating problem: {e}",
                         old_local_file,
                         new_local_file,
                     )
-                    if verbose:
+                    if self.verbose:
                         print(str(corr_tuple))
-                    return corr_tuple
-                if concor > 0.980:
-                    corr_tuple = (self.feature, [concor], [pearson])
-                else:
-                    corr_tuple = (
-                        self.feature,
-                        [concor],
-                        [pearson],
-                        (old_local_file, new_local_file),
-                    )
+                    self.exception = e
+                    return self
                 if self.verbose:
-                    print("Success - {0}".format(str(concor)))
+                    print("Success - {0}".format(str(self.concor)))
+                return self
             else:
-                corr_tuple = ("different shape", old_local_file, new_local_file)
+                msg = f"different shape: {self.old_path} ({data_1.flatten().shape} vs {self.new_path} ({data_2.flatten().shape}))"
+                self.exception = ValueError(msg)
                 if self.verbose:
-                    print(str(corr_tuple))
+                    print(self.exception)
+                return self
 
-        else:
-            if not os.path.exists(old_local_file):
-                corr_tuple = ("file doesn't exist", [old_local_file], None)
-                if self.verbose:
-                    print(str(corr_tuple))
-            if not os.path.exists(new_local_file):
-                if not corr_tuple:
-                    corr_tuple = ("file doesn't exist", [new_local_file], None)
-                    if self.verbose:
-                        print(str(corr_tuple))
-                else:
-                    corr_tuple = ("file doesn't exist", old_local_file, new_local_file)
-                    if self.verbose:
-                        print(str(corr_tuple))
-
+        for filepath in [old_local_file, new_local_file]:
+            if not os.path.exists(filepath):
+                self.exception = FileNotFoundError(
+                    ENOENT, os.strerror(ENOENT), filepath
+                )
+        if self.verbose and self.exception:
+            print(self.exception)
         return self
 
 
@@ -566,7 +571,7 @@ def batch_correlate(
     return concor, pearson
 
 
-def correlate_text_based(txts: Union[list, tuple]) -> tuple[float, float]:
+def correlate_text_based(txts: Union[list, tuple]) -> Generator[np.floating]:
     """Correlate text-based data from multiple files."""
     delimiters = tuple(delimiter_from_filepath(path) for path in txts)
     # TODO: why do we drop columns containing na?
@@ -605,10 +610,7 @@ def correlate_text_based(txts: Union[list, tuple]) -> tuple[float, float]:
             )
         else:
             oned.append(initial_load[i].values)
-    return cast(
-        tuple[float, float],
-        (np.nanmean(measure) for measure in batch_correlate(*oned, axis=0)),
-    )
+    return (np.nanmean(measure) for measure in batch_correlate(*oned, axis=0))
 
 
 def create_unique_file_dict(

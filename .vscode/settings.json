@@ -1,0 +1,5 @@
+{
+  "python.analysis.extraPaths": [
+    "cpac_correlations/stubs"
+  ]
+}
